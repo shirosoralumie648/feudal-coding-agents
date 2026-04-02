@@ -3,6 +3,7 @@ import type { ACPMessage } from "@feudal/acp";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { GatewayStore, type GatewayRunRecord } from "../store";
+import { gatewayWorkerNames, type GatewayWorkerName } from "../workers/types";
 
 const MessageRoleSchema = z.union([
   z.literal("user"),
@@ -23,7 +24,7 @@ const RunCreateSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("agent-run"),
-    agent: z.string(),
+    agent: z.enum(gatewayWorkerNames),
     messages: z.array(MessageSchema)
   })
 ]);
@@ -74,7 +75,10 @@ export function registerRunRoutes(
       return reply.code(400).send({ message: "Unsupported run kind: agent-run" });
     }
 
-    const run = await options.runAgent(payload);
+    const run = await options.runAgent({
+      ...payload,
+      agent: payload.agent as GatewayWorkerName
+    });
     store.saveRun(run);
     return reply.code(201).send(run);
   });
