@@ -1,6 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { manifests } from "../manifests";
+import { GatewayStore } from "../store";
 
-export function registerAgentRoutes(app: FastifyInstance) {
-  app.get("/agents", async () => manifests);
+export function registerAgentRoutes(
+  app: FastifyInstance,
+  store = new GatewayStore()
+) {
+  app.get("/agents", async () => store.listAgents());
 }

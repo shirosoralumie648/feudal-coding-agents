@@ -79,6 +79,38 @@ describe("acp-gateway runs routes", () => {
     });
   });
 
+  it("accepts agent-run requests when a worker runner is wired", async () => {
+    const app = Fastify();
+    registerRunRoutes(app, {
+      runAgent: async (payload) => ({
+        id: "run-agent-1",
+        agent: payload.agent,
+        status: "completed",
+        messages: payload.messages,
+        artifacts: []
+      })
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "plan this task" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({
+      id: "run-agent-1",
+      agent: "analyst-agent",
+      status: "completed",
+      messages: [{ role: "user", content: "plan this task" }],
+      artifacts: []
+    });
+  });
+
   it("returns 404 when a run cannot be found", async () => {
     const app = Fastify();
     registerRunRoutes(app);

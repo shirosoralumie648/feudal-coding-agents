@@ -1,4 +1,5 @@
 import type { ACPArtifact, ACPMessage, ACPRunStatus } from "@feudal/acp";
+import { manifests } from "./manifests";
 
 export interface GatewayRunRecord {
   id: string;
@@ -12,6 +13,10 @@ export interface GatewayRunRecord {
 
 export class GatewayStore {
   private readonly runs = new Map<string, GatewayRunRecord>();
+
+  listAgents() {
+    return manifests;
+  }
 
   saveRun(run: GatewayRunRecord): GatewayRunRecord {
     this.runs.set(run.id, run);
