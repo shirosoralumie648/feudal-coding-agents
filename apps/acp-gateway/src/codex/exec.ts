@@ -16,9 +16,15 @@ type SpawnResult = {
 type SpawnImpl = (command: string, args: string[]) => Promise<SpawnResult | void>;
 
 async function defaultSpawnImpl(command: string, args: string[]) {
-  return execFileAsync(command, args, {
+  const result = await execFileAsync(command, args, {
     maxBuffer: 10 * 1024 * 1024
   });
+
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: 0
+  };
 }
 
 export function createCodexExecRunner(options: {
@@ -38,10 +44,9 @@ export function createCodexExecRunner(options: {
       const outputPath = path.join(tempDir, `${input.role}-output.json`);
 
       await writeFile(schemaPath, JSON.stringify(input.schema, null, 2), "utf8");
-      await writeFile(outputPath, "", "utf8");
 
       try {
-        await spawnImpl("codex", [
+        const result = await spawnImpl("codex", [
           "exec",
           "--full-auto",
           "--skip-git-repo-check",
@@ -54,12 +59,25 @@ export function createCodexExecRunner(options: {
           input.prompt
         ]);
 
-        return JSON.parse(await readFile(outputPath, "utf8")) as Record<
-          string,
-          unknown
-        >;
+        if (result?.exitCode && result.exitCode !== 0) {
+          throw new Error(`codex exec failed with exit code ${result.exitCode}`);
+        }
+
+        const rawOutput = await readFile(outputPath, "utf8").catch(() => {
+          throw new Error("codex exec did not produce output");
+        });
+
+        if (!rawOutput.trim()) {
+          throw new Error("codex exec did not produce output");
+        }
+
+        try {
+          return JSON.parse(rawOutput) as Record<string, unknown>;
+        } catch {
+          throw new Error("codex exec produced invalid JSON output");
+        }
       } finally {
-        await rm(tempDir, { recursive: true, force: true });
+        await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
       }
     }
   };

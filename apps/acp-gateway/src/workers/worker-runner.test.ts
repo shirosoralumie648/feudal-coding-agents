@@ -15,10 +15,29 @@ describe("worker runner", () => {
 
     expect(codexRunner.run).toHaveBeenCalledWith(
       expect.objectContaining({
-        role: "analyst-agent"
+        role: "analyst-agent",
+        prompt: expect.stringContaining("Build the dashboard")
       })
     );
     expect(result.status).toBe("completed");
     expect(result.artifacts[0]?.name).toBe("decision-brief.json");
+    expect(result.artifacts[0]?.content).toEqual({
+      summary: "Plan and review the task."
+    });
+  });
+
+  it("rejects output that does not match the worker schema", async () => {
+    const runner = createWorkerRunner({
+      codexRunner: {
+        run: vi.fn().mockResolvedValue({ summary: 42 })
+      }
+    });
+
+    await expect(
+      runner.runAgent({
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "Build the dashboard" }]
+      })
+    ).rejects.toThrow("Invalid analyst-agent output");
   });
 });

@@ -116,6 +116,34 @@ describe("acp-gateway runs routes", () => {
     });
   });
 
+  it("persists a failed run when the worker runner throws", async () => {
+    const app = Fastify();
+    registerRunRoutes(app, {
+      runAgent: async () => {
+        throw new Error("runner exploded");
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "plan this task" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual(
+      expect.objectContaining({
+        agent: "analyst-agent",
+        status: "failed",
+        artifacts: []
+      })
+    );
+  });
+
   it("returns 404 when a run cannot be found", async () => {
     const app = Fastify();
     registerRunRoutes(app);

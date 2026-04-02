@@ -75,12 +75,21 @@ export function registerRunRoutes(
       return reply.code(400).send({ message: "Unsupported run kind: agent-run" });
     }
 
-    const run = await options.runAgent({
-      ...payload,
-      agent: payload.agent as GatewayWorkerName
-    });
-    store.saveRun(run);
-    return reply.code(201).send(run);
+    try {
+      const run = await options.runAgent(payload);
+      store.saveRun(run);
+      return reply.code(201).send(run);
+    } catch {
+      const failedRun = store.saveRun({
+        id: randomUUID(),
+        agent: payload.agent,
+        status: "failed",
+        messages: payload.messages,
+        artifacts: []
+      });
+
+      return reply.code(201).send(failedRun);
+    }
   });
 
   app.get("/runs/:runId", async (request, reply) => {

@@ -23,4 +23,5 @@ export interface WorkerDefinition {
   artifactName: string;
   outputSchema: Record<string, unknown>;
   buildPrompt(messages: ACPMessage[]): string;
+  parseOutput(payload: unknown): Record<string, unknown>;
 }

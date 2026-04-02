@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export const taskSpecSchema = {
   type: "object",
   properties: {
@@ -8,6 +10,11 @@ export const taskSpecSchema = {
   additionalProperties: false
 } as const;
 
+export const taskSpecResultSchema = z.object({
+  title: z.string(),
+  prompt: z.string()
+});
+
 export const decisionBriefSchema = {
   type: "object",
   properties: {
@@ -16,6 +23,10 @@ export const decisionBriefSchema = {
   required: ["summary"],
   additionalProperties: false
 } as const;
+
+export const decisionBriefResultSchema = z.object({
+  summary: z.string()
+});
 
 export const reviewSchema = {
   type: "object",
@@ -26,6 +37,11 @@ export const reviewSchema = {
   required: ["verdict", "note"],
   additionalProperties: false
 } as const;
+
+export const reviewResultSchema = z.object({
+  verdict: z.string(),
+  note: z.string()
+});
 
 export const executionReportSchema = {
   type: "object",
@@ -40,3 +56,9 @@ export const executionReportSchema = {
   required: ["result", "output"],
   additionalProperties: false
 } as const;
+
+export const executionReportResultSchema = z.object({
+  result: z.string(),
+  output: z.string(),
+  blockingIssues: z.array(z.string()).optional()
+});

@@ -11,11 +11,18 @@ export function createWorkerRunner(options: { codexRunner: CodexRunner }) {
       messages: ACPMessage[];
     }): Promise<GatewayRunRecord> {
       const definition = workerRegistry[input.agent];
-      const payload = await options.codexRunner.run({
+      const rawPayload = await options.codexRunner.run({
         role: input.agent,
         prompt: definition.buildPrompt(input.messages),
         schema: definition.outputSchema
       });
+      let payload: Record<string, unknown>;
+
+      try {
+        payload = definition.parseOutput(rawPayload);
+      } catch {
+        throw new Error(`Invalid ${input.agent} output`);
+      }
 
       return {
         id: randomUUID(),
