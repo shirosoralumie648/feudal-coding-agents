@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./mock-client": "./src/mock-client.ts"
+    "./mock-client": "./src/mock-client.ts",
+    "./http-client": "./src/http-client.ts"
   },
   "scripts": {
     "test": "vitest run"
