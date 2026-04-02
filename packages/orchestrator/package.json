@@ -1,0 +1,11 @@
+{
+  "name": "@feudal/orchestrator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@feudal/contracts": "workspace:*"
+  }
+}
