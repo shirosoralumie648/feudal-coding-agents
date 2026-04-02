@@ -15,6 +15,11 @@ describe("acp-gateway runs routes", () => {
     });
 
     expect(agents.statusCode).toBe(200);
+    expect(agents.json()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "intake-agent" })
+      ])
+    );
 
     const created = await app.inject({
       method: "POST",
@@ -124,13 +129,52 @@ describe("acp-gateway runs routes", () => {
     expect(response.json()).toEqual({ message: "Run not found" });
   });
 
-  it("returns 409 when resuming a missing or non-awaiting run", async () => {
+  it("returns 409 when resuming a missing run", async () => {
     const app = Fastify();
     registerRunRoutes(app);
 
     const response = await app.inject({
       method: "POST",
       url: "/runs/missing-run",
+      payload: {
+        role: "user",
+        content: "approve"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "Run is not awaiting input"
+    });
+  });
+
+  it("returns 409 when resuming a non-awaiting run", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "await",
+        label: "approval-needed",
+        prompt: "Proceed?",
+        actions: ["approve", "reject"]
+      }
+    });
+
+    await app.inject({
+      method: "POST",
+      url: `/runs/${created.json().id}`,
+      payload: {
+        role: "user",
+        content: "approve"
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/runs/${created.json().id}`,
       payload: {
         role: "user",
         content: "approve"
@@ -171,5 +215,51 @@ describe("acp-gateway runs routes", () => {
     expect(response.json()).toEqual({
       message: "Unsupported approval action: defer"
     });
+  });
+
+  it("returns 400 for invalid agent-run payloads", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "system", content: "bad role" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().message).toBe("Invalid run payload");
+  });
+
+  it("returns 400 for invalid await response payloads", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "await",
+        label: "approval-needed",
+        prompt: "Proceed?",
+        actions: ["approve", "reject"]
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/runs/${created.json().id}`,
+      payload: {
+        role: "agent/intake-agent",
+        content: "approve"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().message).toBe("Invalid await response payload");
   });
 });

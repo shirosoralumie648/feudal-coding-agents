@@ -4,8 +4,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { GatewayStore, type GatewayRunRecord } from "../store";
 
+const MessageRoleSchema = z.union([
+  z.literal("user"),
+  z.string().regex(/^agent\/.+/)
+]);
+
 const MessageSchema = z.object({
-  role: z.string(),
+  role: MessageRoleSchema,
   content: z.string()
 });
 
@@ -40,7 +45,16 @@ export function registerRunRoutes(
   const store = options?.store ?? new GatewayStore();
 
   app.post("/runs", async (request, reply) => {
-    const payload = RunCreateSchema.parse(request.body);
+    const payloadResult = RunCreateSchema.safeParse(request.body);
+
+    if (!payloadResult.success) {
+      return reply.code(400).send({
+        message: "Invalid run payload",
+        issues: payloadResult.error.issues
+      });
+    }
+
+    const payload = payloadResult.data;
 
     if (payload.kind === "await") {
       const run = store.saveRun({
@@ -78,8 +92,17 @@ export function registerRunRoutes(
 
   app.post("/runs/:runId", async (request, reply) => {
     const params = z.object({ runId: z.string() }).parse(request.params);
-    const response = AwaitResponseSchema.parse(request.body);
+    const responseResult = AwaitResponseSchema.safeParse(request.body);
     const run = store.getRun(params.runId);
+
+    if (!responseResult.success) {
+      return reply.code(400).send({
+        message: "Invalid await response payload",
+        issues: responseResult.error.issues
+      });
+    }
+
+    const response = responseResult.data;
 
     if (!run || run.status !== "awaiting") {
       return reply.code(409).send({ message: "Run is not awaiting input" });
