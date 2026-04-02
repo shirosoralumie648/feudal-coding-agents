@@ -18,6 +18,22 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/node@24.12.0)(jsdom@26.1.0)(tsx@4.21.0)
 
+  apps/acp-gateway:
+    dependencies:
+      '@feudal/acp':
+        specifier: workspace:*
+        version: link:../../packages/acp
+      fastify:
+        specifier: ^5.0.0
+        version: 5.8.4
+      zod:
+        specifier: ^4.0.0
+        version: 4.3.6
+    devDependencies:
+      tsx:
+        specifier: ^4.20.0
+        version: 4.21.0
+
   apps/control-plane:
     dependencies:
       '@feudal/acp':

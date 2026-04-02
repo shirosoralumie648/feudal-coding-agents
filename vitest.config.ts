@@ -6,6 +6,7 @@ export default defineConfig({
       "packages/contracts",
       "packages/orchestrator",
       "packages/acp",
+      "apps/acp-gateway",
       "apps/control-plane",
       "apps/web"
     ]

@@ -1,0 +1,143 @@
+import Fastify from "fastify";
+import { describe, expect, it } from "vitest";
+import { registerAgentRoutes } from "./agents";
+import { registerRunRoutes } from "./runs";
+
+describe("acp-gateway runs routes", () => {
+  it("supports discovery, await creation, run retrieval, and await resume", async () => {
+    const app = Fastify();
+    registerAgentRoutes(app);
+    registerRunRoutes(app);
+
+    const agents = await app.inject({
+      method: "GET",
+      url: "/agents"
+    });
+
+    expect(agents.statusCode).toBe(200);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "await",
+        label: "approval-needed",
+        prompt: "Proceed?",
+        actions: ["approve", "reject"]
+      }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json().status).toBe("awaiting");
+    expect(created.json().id).toEqual(expect.any(String));
+    expect(created.json().runId).toBeUndefined();
+
+    const runId = created.json().id;
+    const retrieved = await app.inject({
+      method: "GET",
+      url: `/runs/${runId}`
+    });
+
+    expect(retrieved.statusCode).toBe(200);
+    expect(retrieved.json().id).toBe(runId);
+    expect(retrieved.json()).toEqual(created.json());
+
+    const resumed = await app.inject({
+      method: "POST",
+      url: `/runs/${runId}`,
+      payload: {
+        role: "user",
+        content: "approve"
+      }
+    });
+
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json().status).toBe("completed");
+    expect(resumed.json().messages.at(-1)).toEqual({
+      role: "user",
+      content: "approve"
+    });
+  });
+
+  it("rejects agent-run requests when no worker runner is wired", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "plan this task" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      message: "Unsupported run kind: agent-run"
+    });
+  });
+
+  it("returns 404 when a run cannot be found", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/runs/missing-run"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ message: "Run not found" });
+  });
+
+  it("returns 409 when resuming a missing or non-awaiting run", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs/missing-run",
+      payload: {
+        role: "user",
+        content: "approve"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "Run is not awaiting input"
+    });
+  });
+
+  it("returns 400 for unsupported approval actions", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "await",
+        label: "approval-needed",
+        prompt: "Proceed?",
+        actions: ["approve", "reject"]
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/runs/${created.json().id}`,
+      payload: {
+        role: "user",
+        content: "defer"
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      message: "Unsupported approval action: defer"
+    });
+  });
+});
