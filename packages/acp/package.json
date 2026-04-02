@@ -2,6 +2,10 @@
   "name": "@feudal/acp",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mock-client": "./src/mock-client.ts"
+  },
   "scripts": {
     "test": "vitest run"
   }

@@ -2,6 +2,7 @@
   "name": "@feudal/orchestrator",
   "private": true,
   "type": "module",
+  "exports": "./src/task-machine.ts",
   "scripts": {
     "test": "vitest run"
   },
