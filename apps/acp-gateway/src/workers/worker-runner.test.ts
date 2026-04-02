@@ -40,4 +40,21 @@ describe("worker runner", () => {
       })
     ).rejects.toThrow("Invalid analyst-agent output");
   });
+
+  it("rejects output with extra properties when the schema is strict", async () => {
+    const runner = createWorkerRunner({
+      codexRunner: {
+        run: vi
+          .fn()
+          .mockResolvedValue({ summary: "Plan and review the task.", extra: true })
+      }
+    });
+
+    await expect(
+      runner.runAgent({
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "Build the dashboard" }]
+      })
+    ).rejects.toThrow("Invalid analyst-agent output");
+  });
 });

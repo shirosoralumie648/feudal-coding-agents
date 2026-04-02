@@ -10,10 +10,12 @@ export const taskSpecSchema = {
   additionalProperties: false
 } as const;
 
-export const taskSpecResultSchema = z.object({
-  title: z.string(),
-  prompt: z.string()
-});
+export const taskSpecResultSchema = z
+  .object({
+    title: z.string(),
+    prompt: z.string()
+  })
+  .strict();
 
 export const decisionBriefSchema = {
   type: "object",
@@ -24,9 +26,11 @@ export const decisionBriefSchema = {
   additionalProperties: false
 } as const;
 
-export const decisionBriefResultSchema = z.object({
-  summary: z.string()
-});
+export const decisionBriefResultSchema = z
+  .object({
+    summary: z.string()
+  })
+  .strict();
 
 export const reviewSchema = {
   type: "object",
@@ -38,10 +42,12 @@ export const reviewSchema = {
   additionalProperties: false
 } as const;
 
-export const reviewResultSchema = z.object({
-  verdict: z.string(),
-  note: z.string()
-});
+export const reviewResultSchema = z
+  .object({
+    verdict: z.string(),
+    note: z.string()
+  })
+  .strict();
 
 export const executionReportSchema = {
   type: "object",
@@ -57,8 +63,10 @@ export const executionReportSchema = {
   additionalProperties: false
 } as const;
 
-export const executionReportResultSchema = z.object({
-  result: z.string(),
-  output: z.string(),
-  blockingIssues: z.array(z.string()).optional()
-});
+export const executionReportResultSchema = z
+  .object({
+    result: z.string(),
+    output: z.string(),
+    blockingIssues: z.array(z.string()).optional()
+  })
+  .strict();
