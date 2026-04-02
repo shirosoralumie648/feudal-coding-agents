@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@feudal/contracts": ["packages/contracts/src/index.ts"],
+      "@feudal/orchestrator": ["packages/orchestrator/src/task-machine.ts"],
+      "@feudal/acp": ["packages/acp/src/index.ts"],
+      "@feudal/acp/*": ["packages/acp/src/*"]
+    }
+  }
+}
