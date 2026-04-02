@@ -67,10 +67,14 @@ export function createHttpACPClient(input: { baseUrl: string }): ACPClient {
       return parseJsonOrThrow<ACPRun>(response);
     },
 
-    async getRun(runId: string): Promise<ACPRun> {
+    async getRun(runId: string): Promise<ACPRun | undefined> {
       const response = await fetch(`${baseUrl}/runs/${runId}`, {
         method: "GET"
       });
+
+      if (response.status === 404) {
+        return undefined;
+      }
 
       return parseJsonOrThrow<ACPRun>(response);
     }
