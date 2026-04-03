@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
+import type { GatewayRunStore } from "../store";
 import { registerAgentRoutes } from "./agents";
 import { registerRunRoutes } from "./runs";
 
@@ -154,6 +155,49 @@ describe("acp-gateway runs routes", () => {
     expect(response.json().recoveryReason).toBeUndefined();
   });
 
+  it("returns 500 when persistence fails after a successful agent run", async () => {
+    const store = {
+      async getRun() {
+        return undefined;
+      },
+      async saveRun(run) {
+        if (run.status === "completed") {
+          throw new Error("database unavailable");
+        }
+
+        return {
+          ...run,
+          recoveryState: "healthy",
+          latestEventId: 2,
+          latestProjectionVersion: 2
+        };
+      }
+    } satisfies GatewayRunStore;
+    const app = Fastify();
+    registerRunRoutes(app, {
+      store,
+      runAgent: async (payload) => ({
+        id: "run-agent-2",
+        agent: payload.agent,
+        status: "completed",
+        messages: payload.messages,
+        artifacts: []
+      })
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "plan this task" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(500);
+  });
+
   it("returns 404 when a run cannot be found", async () => {
     const app = Fastify();
     registerRunRoutes(app);
@@ -222,6 +266,44 @@ describe("acp-gateway runs routes", () => {
     expect(response.statusCode).toBe(409);
     expect(response.json()).toEqual({
       message: "Run is not awaiting input"
+    });
+  });
+
+  it("returns 409 when a resume hits an event version conflict", async () => {
+    const store = {
+      async getRun() {
+        return {
+          id: "run-race",
+          agent: "approval-needed",
+          status: "awaiting",
+          messages: [],
+          artifacts: [],
+          awaitPrompt: "Proceed?",
+          allowedActions: ["approve", "reject"],
+          recoveryState: "healthy" as const,
+          latestEventId: 2,
+          latestProjectionVersion: 2
+        };
+      },
+      async saveRun() {
+        throw new Error("Event version mismatch for run:run-race");
+      }
+    } satisfies GatewayRunStore;
+    const app = Fastify();
+    registerRunRoutes(app, { store });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs/run-race",
+      payload: {
+        role: "user",
+        content: "approve"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "Run state changed, retry the request"
     });
   });
 

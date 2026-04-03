@@ -36,6 +36,10 @@ const AwaitResponseSchema = z.object({
 
 type AgentRunPayload = Extract<z.infer<typeof RunCreateSchema>, { kind: "agent-run" }>;
 
+function isRunVersionMismatch(error: unknown) {
+  return error instanceof Error && error.message.startsWith("Event version mismatch for run:");
+}
+
 export function registerRunRoutes(
   app: FastifyInstance,
   options?: {
@@ -79,10 +83,10 @@ export function registerRunRoutes(
       return reply.code(400).send({ message: "Unsupported run kind: agent-run" });
     }
 
+    let run: GatewayRunRecord;
+
     try {
-      const run = await options.runAgent(payload);
-      const persisted = await store.saveRun(run, `run.${run.status}`, 0);
-      return reply.code(201).send(persisted);
+      run = await options.runAgent(payload);
     } catch {
       const failedRun = await store.saveRun(
         {
@@ -98,6 +102,9 @@ export function registerRunRoutes(
 
       return reply.code(201).send(failedRun);
     }
+
+    const persisted = await store.saveRun(run, `run.${run.status}`, 0);
+    return reply.code(201).send(persisted);
   });
 
   app.get("/runs/:runId", async (request, reply) => {
@@ -135,16 +142,26 @@ export function registerRunRoutes(
         .send({ message: `Unsupported approval action: ${response.content}` });
     }
 
-    const resumed = await store.saveRun(
-      {
-        ...run,
-        status: "completed",
-        messages: [...run.messages, response as ACPMessage]
-      },
-      "run.status_transitioned",
-      run.latestProjectionVersion
-    );
+    try {
+      const resumed = await store.saveRun(
+        {
+          ...run,
+          status: "completed",
+          messages: [...run.messages, response as ACPMessage]
+        },
+        "run.status_transitioned",
+        run.latestProjectionVersion
+      );
 
-    return resumed;
+      return resumed;
+    } catch (error) {
+      if (isRunVersionMismatch(error)) {
+        return reply.code(409).send({
+          message: "Run state changed, retry the request"
+        });
+      }
+
+      throw error;
+    }
   });
 }

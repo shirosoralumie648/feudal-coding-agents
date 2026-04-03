@@ -45,8 +45,8 @@ function toRunSnapshot(run: GatewayRunRecord) {
     phase: run.phase,
     messages: run.messages,
     artifacts: run.artifacts,
-    ...(run.awaitPrompt ? { awaitPrompt: run.awaitPrompt } : {}),
-    ...(run.allowedActions ? { allowedActions: run.allowedActions } : {})
+    ...(run.awaitPrompt !== undefined ? { awaitPrompt: run.awaitPrompt } : {}),
+    ...(run.allowedActions !== undefined ? { allowedActions: run.allowedActions } : {})
   } satisfies Record<string, unknown>;
 }
 
