@@ -41,4 +41,15 @@ export function registerTaskRoutes(
 
     return service.approveTask(params.taskId);
   });
+
+  app.post("/api/tasks/:taskId/reject", async (request, reply) => {
+    const params = z.object({ taskId: z.string() }).parse(request.params);
+    const task = await service.getTask(params.taskId);
+
+    if (!task) {
+      return reply.code(404).send({ message: "Task not found" });
+    }
+
+    return service.rejectTask(params.taskId);
+  });
 }

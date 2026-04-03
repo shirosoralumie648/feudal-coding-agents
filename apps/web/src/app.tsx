@@ -17,6 +17,7 @@ import {
   fetchTaskEvents,
   fetchTaskReplay,
   fetchTasks,
+  rejectTask,
   type CreateTaskInput,
   type RecoverySummary,
   type TaskConsoleRecord,
@@ -272,6 +273,28 @@ export function App() {
     }
   }
 
+  async function handleReject(taskId: string) {
+    setActiveApprovalId(taskId);
+
+    try {
+      const rejectedTask = await rejectTask(taskId);
+
+      startTransition(() => {
+        upsertTask(rejectedTask);
+        setSelectedTaskId(rejectedTask.id);
+        setError(undefined);
+      });
+    } catch (nextError: unknown) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Unable to reject the task."
+      );
+    } finally {
+      setActiveApprovalId(undefined);
+    }
+  }
+
   async function handleReplay(taskId: string, eventId: number) {
     try {
       const replay = await fetchTaskReplay(taskId, eventId);
@@ -365,6 +388,7 @@ export function App() {
         <ApprovalInboxPanel
           activeApprovalId={activeApprovalId}
           onApprove={handleApprove}
+          onReject={handleReject}
           tasks={awaitingTasks}
         />
         <AgentRegistryPanel agents={agents} />

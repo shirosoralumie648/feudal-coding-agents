@@ -3,11 +3,12 @@ import type { TaskRecord } from "@feudal/contracts";
 interface ApprovalInboxPanelProps {
   activeApprovalId?: string;
   onApprove: (taskId: string) => void | Promise<void>;
+  onReject: (taskId: string) => void | Promise<void>;
   tasks: TaskRecord[];
 }
 
 export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
-  const { activeApprovalId, onApprove, tasks } = props;
+  const { activeApprovalId, onApprove, onReject, tasks } = props;
 
   return (
     <section className="panel panel-approval">
@@ -29,15 +30,26 @@ export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
                 </>
               ) : null}
             </div>
-            <button
-              type="button"
-              disabled={activeApprovalId === task.id}
-              onClick={() => void onApprove(task.id)}
-            >
-              {activeApprovalId === task.id
-                ? `Approving ${task.title}...`
-                : `Approve ${task.title}`}
-            </button>
+            <div className="button-row">
+              <button
+                type="button"
+                disabled={activeApprovalId === task.id}
+                onClick={() => void onApprove(task.id)}
+              >
+                {activeApprovalId === task.id
+                  ? `Processing ${task.title}...`
+                  : `Approve ${task.title}`}
+              </button>
+              <button
+                type="button"
+                disabled={activeApprovalId === task.id}
+                onClick={() => void onReject(task.id)}
+              >
+                {activeApprovalId === task.id
+                  ? `Processing ${task.title}...`
+                  : `Reject ${task.title}`}
+              </button>
+            </div>
           </li>
         ))}
       </ul>

@@ -87,4 +87,34 @@ describe("orchestrator service durability", () => {
     expect(firstSaveIndex).toBeGreaterThan(respondIndex);
     expect(executeIndex).toBeGreaterThan(firstSaveIndex);
   });
+
+  it("persists rejection consumption without starting execution", async () => {
+    const events: string[] = [];
+    const service = createOrchestratorService({
+      acpClient: createRecordingACPClient(events),
+      store: new RecordingTaskStore(events)
+    });
+
+    const created = await service.createTask({
+      id: "task-durable-reject",
+      title: "Build dashboard",
+      prompt: "Create the dashboard task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    events.length = 0;
+
+    await service.rejectTask(created.id);
+
+    const respondIndex = events.findIndex((event) => event.startsWith("respond:"));
+    const firstSaveIndex = events.findIndex((event) => event.startsWith("save:"));
+    const executeIndex = events.findIndex((event) => event === "run:gongbu-executor");
+
+    expect(respondIndex).toBeGreaterThanOrEqual(0);
+    expect(firstSaveIndex).toBeGreaterThan(respondIndex);
+    expect(executeIndex).toBe(-1);
+    expect(events).toContain("save:task.rejected:rejected:10");
+  });
 });

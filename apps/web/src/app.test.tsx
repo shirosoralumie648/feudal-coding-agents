@@ -76,6 +76,7 @@ function mockConsoleApi(options?: {
   initialTasks?: TaskRecord[];
   createdTask?: TaskRecord;
   approvedTask?: TaskRecord;
+  rejectedTask?: TaskRecord;
   recoverySummary?: {
     tasksNeedingRecovery: number;
     runsNeedingRecovery: number;
@@ -186,6 +187,29 @@ function mockConsoleApi(options?: {
       return json(approvedTask);
     }
 
+    if (url.endsWith(`/api/tasks/${defaultTask.id}/reject`) && method === "POST") {
+      const rejectedTask =
+        options?.rejectedTask ??
+        ({
+          ...defaultTask,
+          status: "rejected",
+          approvalRunId: undefined,
+          approvalRequest: undefined,
+          history: [
+            ...defaultTask.history,
+            {
+              status: "rejected",
+              at: "2026-04-02T14:05:00.000Z",
+              note: "approval.rejected"
+            }
+          ],
+          updatedAt: "2026-04-02T14:05:00.000Z"
+        } satisfies TaskRecord);
+
+      tasks = tasks.map((task) => (task.id === rejectedTask.id ? rejectedTask : task));
+      return json(rejectedTask);
+    }
+
     throw new Error(`Unexpected fetch for ${method} ${url}`);
   });
 
@@ -245,6 +269,23 @@ describe("App", () => {
     expect(await screen.findByText("Verifier accepted the work.")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/tasks/task-1/approve",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("rejects a task from the inbox and refreshes the detail panel", async () => {
+    const fetchMock = mockConsoleApi();
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reject Build dashboard" }));
+
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Build dashboard" })
+    ).toBeVisible();
+    expect(await screen.findByText("approval.rejected")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks/task-1/reject",
       expect.objectContaining({ method: "POST" })
     );
   });

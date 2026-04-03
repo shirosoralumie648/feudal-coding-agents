@@ -100,6 +100,12 @@ export async function approveTask(taskId: string) {
   });
 }
 
+export async function rejectTask(taskId: string) {
+  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/reject`, {
+    method: "POST"
+  });
+}
+
 export async function fetchTaskEvents(taskId: string) {
   return requestJson<TaskEventSummary[]>(`/api/tasks/${taskId}/events`);
 }

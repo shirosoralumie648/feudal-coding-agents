@@ -12,6 +12,7 @@ import { MemoryTaskStore, type TaskStore } from "../store";
 export interface OrchestratorService {
   createTask(spec: TaskSpec): Promise<TaskProjectionRecord>;
   approveTask(taskId: string): Promise<TaskProjectionRecord>;
+  rejectTask(taskId: string): Promise<TaskProjectionRecord>;
   listTasks(): Promise<TaskProjectionRecord[]>;
   getTask(taskId: string): Promise<TaskProjectionRecord | undefined>;
   listTaskEvents(taskId: string): ReturnType<TaskStore["listTaskEvents"]>;
@@ -295,6 +296,41 @@ export function createOrchestratorService(options: {
       };
 
       return persistTask(task, `task.${task.status}`);
+    },
+
+    async rejectTask(taskId: string): Promise<TaskProjectionRecord> {
+      const current = await store.getTask(taskId);
+
+      if (!current || !current.approvalRunId) {
+        throw new Error(`Task ${taskId} is not awaiting approval`);
+      }
+
+      let latestProjectionVersion = current.latestProjectionVersion;
+      const persistTask = async (taskSnapshot: TaskRecord, eventType: string) => {
+        const projection = await store.saveTask(
+          taskSnapshot,
+          eventType,
+          latestProjectionVersion
+        );
+        latestProjectionVersion = projection.latestProjectionVersion;
+        return projection;
+      };
+
+      const resumedApprovalRun = await acp.respondToAwait(current.approvalRunId, {
+        role: "user",
+        content: "reject"
+      });
+
+      const rejectedTask = {
+        ...transitionTask(current, { type: "approval.rejected" }),
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        runs: current.runs.map((run) =>
+          run.id === resumedApprovalRun.id ? toRunSummary(resumedApprovalRun, "approval") : run
+        )
+      };
+
+      return persistTask(rejectedTask, "task.rejected");
     },
 
     async listTasks() {

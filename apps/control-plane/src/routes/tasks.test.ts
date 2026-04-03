@@ -258,6 +258,57 @@ describe("control-plane routes", () => {
     expect(response.json()).toEqual({ message: "Task not found" });
   });
 
+  it("rejects a task and marks it rejected", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Build dashboard",
+        prompt: "Create the dashboard task",
+        allowMock: true,
+        requiresApproval: true,
+        sensitivity: "medium"
+      }
+    });
+
+    const rejection = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/reject`
+    });
+
+    expect(rejection.statusCode).toBe(200);
+    expect(rejection.json().status).toBe("rejected");
+    expect(rejection.json().approvalRunId).toBeUndefined();
+    expect(rejection.json().approvalRequest).toBeUndefined();
+    expect(rejection.json().runs.map((run: { phase: string }) => run.phase)).toEqual([
+      "intake",
+      "planning",
+      "review",
+      "review",
+      "approval"
+    ]);
+    expect(
+      rejection.json().runs.find((run: { phase: string }) => run.phase === "approval")
+        ?.status
+    ).toBe("completed");
+  });
+
+  it("returns 404 when rejecting an unknown task", async () => {
+    const app = Fastify();
+    registerAgentRoutes(app);
+    registerTaskRoutes(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tasks/missing-task/reject"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ message: "Task not found" });
+  });
+
   it("retries the executor once before completing the task", async () => {
     const flaky = createExecutorFlakyClient(1);
     const app = createAppWithClient(flaky.client);
