@@ -36,6 +36,19 @@ const defaultTask: TaskRecord = {
   ],
   runIds: ["run-1"],
   approvalRunId: "await-1",
+  runs: [
+    {
+      id: "run-1",
+      agent: "analyst-agent",
+      status: "completed",
+      phase: "planning"
+    }
+  ],
+  approvalRequest: {
+    runId: "await-1",
+    prompt: "Approve the decision brief?",
+    actions: ["approve", "reject"]
+  },
   createdAt: "2026-04-02T14:00:00.000Z",
   updatedAt: "2026-04-02T14:00:00.000Z"
 };
@@ -83,6 +96,7 @@ function mockConsoleApi(options?: {
           ...defaultTask,
           status: "completed",
           approvalRunId: undefined,
+          approvalRequest: undefined,
           artifacts: [
             ...defaultTask.artifacts,
             {
@@ -99,6 +113,23 @@ function mockConsoleApi(options?: {
               status: "completed",
               at: "2026-04-02T14:10:00.000Z",
               note: "verification.passed"
+            }
+          ],
+          runs: [
+            ...defaultTask.runs.map((run) =>
+              run.phase === "planning" ? { ...run, status: "completed" } : run
+            ),
+            {
+              id: "run-2",
+              agent: "gongbu-executor",
+              status: "completed",
+              phase: "execution"
+            },
+            {
+              id: "run-3",
+              agent: "xingbu-verifier",
+              status: "completed",
+              phase: "verification"
             }
           ],
           updatedAt: "2026-04-02T14:10:00.000Z"
@@ -140,6 +171,18 @@ describe("App", () => {
     ).toBeVisible();
     expect(screen.getByText("gongbu-executor")).toBeVisible();
     expect(screen.getByText("Review and execute the dashboard task.")).toBeVisible();
+  });
+
+  it("shows ACP run details and approval prompt from the selected task", async () => {
+    mockConsoleApi();
+
+    render(<App />);
+
+    expect(await screen.findByText("Run run-1")).toBeVisible();
+    expect(screen.getByText("Approve the decision brief?")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Approve Build dashboard" })
+    ).toBeVisible();
   });
 
   it("approves a task from the inbox and refreshes the detail panel", async () => {

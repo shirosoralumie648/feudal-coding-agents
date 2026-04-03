@@ -235,6 +235,29 @@ textarea {
   color: var(--muted);
 }
 
+.task-summary-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.approval-gate {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 253, 249, 0.92);
+  border: 1px solid rgba(161, 63, 43, 0.1);
+}
+
+.approval-gate p,
+.approval-gate small {
+  margin: 0;
+  color: var(--muted);
+}
+
 .detail-list,
 .registry-list {
   margin: 0;
