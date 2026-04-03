@@ -34,6 +34,8 @@ describe("acp-gateway runs routes", () => {
 
     expect(created.statusCode).toBe(201);
     expect(created.json().status).toBe("awaiting");
+    expect(created.json().recoveryState).toBe("healthy");
+    expect(created.json().recoveryReason).toBeUndefined();
     expect(created.json().id).toEqual(expect.any(String));
     expect(created.json().runId).toBeUndefined();
 
@@ -58,6 +60,8 @@ describe("acp-gateway runs routes", () => {
 
     expect(resumed.statusCode).toBe(200);
     expect(resumed.json().status).toBe("completed");
+    expect(resumed.json().recoveryState).toBe("healthy");
+    expect(resumed.json().recoveryReason).toBeUndefined();
     expect(resumed.json().messages.at(-1)).toEqual({
       role: "user",
       content: "approve"
@@ -107,13 +111,17 @@ describe("acp-gateway runs routes", () => {
     });
 
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toEqual({
-      id: "run-agent-1",
-      agent: "analyst-agent",
-      status: "completed",
-      messages: [{ role: "user", content: "plan this task" }],
-      artifacts: []
-    });
+    expect(response.json()).toEqual(
+      expect.objectContaining({
+        id: "run-agent-1",
+        agent: "analyst-agent",
+        status: "completed",
+        messages: [{ role: "user", content: "plan this task" }],
+        artifacts: [],
+        recoveryState: "healthy"
+      })
+    );
+    expect(response.json().recoveryReason).toBeUndefined();
   });
 
   it("persists a failed run when the worker runner throws", async () => {
@@ -139,9 +147,11 @@ describe("acp-gateway runs routes", () => {
       expect.objectContaining({
         agent: "analyst-agent",
         status: "failed",
-        artifacts: []
+        artifacts: [],
+        recoveryState: "healthy"
       })
     );
+    expect(response.json().recoveryReason).toBeUndefined();
   });
 
   it("returns 404 when a run cannot be found", async () => {

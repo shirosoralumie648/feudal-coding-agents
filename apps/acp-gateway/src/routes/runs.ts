@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ACPMessage } from "@feudal/acp";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { GatewayStore, type GatewayRunRecord } from "../store";
+import { GatewayStore, type GatewayRunRecord, type GatewayRunStore } from "../store";
 import { gatewayWorkerNames, type GatewayWorkerName } from "../workers/types";
 
 const MessageRoleSchema = z.union([
@@ -39,7 +39,7 @@ type AgentRunPayload = Extract<z.infer<typeof RunCreateSchema>, { kind: "agent-r
 export function registerRunRoutes(
   app: FastifyInstance,
   options?: {
-    store?: GatewayStore;
+    store?: GatewayRunStore;
     runAgent?: (payload: AgentRunPayload) => Promise<GatewayRunRecord>;
   }
 ) {
@@ -58,15 +58,19 @@ export function registerRunRoutes(
     const payload = payloadResult.data;
 
     if (payload.kind === "await") {
-      const run = store.saveRun({
-        id: randomUUID(),
-        agent: payload.label,
-        status: "awaiting",
-        messages: [],
-        artifacts: [],
-        awaitPrompt: payload.prompt,
-        allowedActions: payload.actions
-      });
+      const run = await store.saveRun(
+        {
+          id: randomUUID(),
+          agent: payload.label,
+          status: "awaiting",
+          messages: [],
+          artifacts: [],
+          awaitPrompt: payload.prompt,
+          allowedActions: payload.actions
+        },
+        "run.created",
+        0
+      );
 
       return reply.code(201).send(run);
     }
@@ -77,16 +81,20 @@ export function registerRunRoutes(
 
     try {
       const run = await options.runAgent(payload);
-      store.saveRun(run);
-      return reply.code(201).send(run);
+      const persisted = await store.saveRun(run, `run.${run.status}`, 0);
+      return reply.code(201).send(persisted);
     } catch {
-      const failedRun = store.saveRun({
-        id: randomUUID(),
-        agent: payload.agent,
-        status: "failed",
-        messages: payload.messages,
-        artifacts: []
-      });
+      const failedRun = await store.saveRun(
+        {
+          id: randomUUID(),
+          agent: payload.agent,
+          status: "failed",
+          messages: payload.messages,
+          artifacts: []
+        },
+        "run.failed",
+        0
+      );
 
       return reply.code(201).send(failedRun);
     }
@@ -94,7 +102,7 @@ export function registerRunRoutes(
 
   app.get("/runs/:runId", async (request, reply) => {
     const params = z.object({ runId: z.string() }).parse(request.params);
-    const run = store.getRun(params.runId);
+    const run = await store.getRun(params.runId);
 
     if (!run) {
       return reply.code(404).send({ message: "Run not found" });
@@ -106,7 +114,7 @@ export function registerRunRoutes(
   app.post("/runs/:runId", async (request, reply) => {
     const params = z.object({ runId: z.string() }).parse(request.params);
     const responseResult = AwaitResponseSchema.safeParse(request.body);
-    const run = store.getRun(params.runId);
+    const run = await store.getRun(params.runId);
 
     if (!responseResult.success) {
       return reply.code(400).send({
@@ -127,11 +135,15 @@ export function registerRunRoutes(
         .send({ message: `Unsupported approval action: ${response.content}` });
     }
 
-    const resumed = store.saveRun({
-      ...run,
-      status: "completed",
-      messages: [...run.messages, response as ACPMessage]
-    });
+    const resumed = await store.saveRun(
+      {
+        ...run,
+        status: "completed",
+        messages: [...run.messages, response as ACPMessage]
+      },
+      "run.status_transitioned",
+      run.latestProjectionVersion
+    );
 
     return resumed;
   });

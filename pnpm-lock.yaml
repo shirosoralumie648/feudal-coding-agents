@@ -23,6 +23,9 @@ importers:
       '@feudal/acp':
         specifier: workspace:*
         version: link:../../packages/acp
+      '@feudal/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
       fastify:
         specifier: ^5.0.0
         version: 5.8.4
@@ -30,6 +33,9 @@ importers:
         specifier: ^4.0.0
         version: 4.3.6
     devDependencies:
+      pg-mem:
+        specifier: ^3.0.5
+        version: 3.0.14
       tsx:
         specifier: ^4.20.0
         version: 4.21.0
