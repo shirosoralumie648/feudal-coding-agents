@@ -14,6 +14,16 @@ export interface OrchestratorService {
   approveTask(taskId: string): Promise<TaskProjectionRecord>;
   listTasks(): Promise<TaskProjectionRecord[]>;
   getTask(taskId: string): Promise<TaskProjectionRecord | undefined>;
+  listTaskEvents(taskId: string): ReturnType<TaskStore["listTaskEvents"]>;
+  listTaskDiffs(taskId: string): ReturnType<TaskStore["listTaskDiffs"]>;
+  listTaskRuns(taskId: string): ReturnType<TaskStore["listTaskRuns"]>;
+  listTaskArtifacts(taskId: string): ReturnType<TaskStore["listTaskArtifacts"]>;
+  replayTaskAtEventId(
+    taskId: string,
+    eventId: number
+  ): ReturnType<TaskStore["replayTaskAtEventId"]>;
+  getRecoverySummary(): ReturnType<TaskStore["getRecoverySummary"]>;
+  rebuildProjectionsIfNeeded(): ReturnType<TaskStore["rebuildProjectionsIfNeeded"]>;
   listAgents(): ReturnType<ACPClient["listAgents"]>;
 }
 
@@ -293,6 +303,34 @@ export function createOrchestratorService(options: {
 
     async getTask(taskId: string) {
       return store.getTask(taskId);
+    },
+
+    async listTaskEvents(taskId: string) {
+      return store.listTaskEvents(taskId);
+    },
+
+    async listTaskDiffs(taskId: string) {
+      return store.listTaskDiffs(taskId);
+    },
+
+    async listTaskRuns(taskId: string) {
+      return store.listTaskRuns(taskId);
+    },
+
+    async listTaskArtifacts(taskId: string) {
+      return store.listTaskArtifacts(taskId);
+    },
+
+    async replayTaskAtEventId(taskId: string, eventId: number) {
+      return store.replayTaskAtEventId(taskId, eventId);
+    },
+
+    async getRecoverySummary() {
+      return store.getRecoverySummary();
+    },
+
+    async rebuildProjectionsIfNeeded() {
+      await store.rebuildProjectionsIfNeeded();
     },
 
     async listAgents() {
