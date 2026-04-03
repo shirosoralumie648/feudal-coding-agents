@@ -6,6 +6,7 @@
     "dev": "pnpm --parallel --filter @feudal/acp-gateway --filter @feudal/control-plane --filter @feudal/web dev",
     "build": "pnpm --filter @feudal/web build",
     "test": "pnpm exec vitest run --config vitest.config.ts",
+    "db:migrate": "pnpm --filter @feudal/persistence migrate",
     "e2e": "pnpm --filter @feudal/web exec playwright test"
   },
   "devDependencies": {
