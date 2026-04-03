@@ -1,6 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { listAgents } from "../services/orchestrator-service";
+import { defaultOrchestratorService } from "../config";
+import type { OrchestratorService } from "../services/orchestrator-service";
 
-export function registerAgentRoutes(app: FastifyInstance) {
-  app.get("/api/agents", async () => listAgents());
+export function registerAgentRoutes(
+  app: FastifyInstance,
+  service: OrchestratorService = defaultOrchestratorService
+) {
+  app.get("/api/agents", async () => service.listAgents());
 }
