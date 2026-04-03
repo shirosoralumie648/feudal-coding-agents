@@ -4,14 +4,24 @@ import type { ACPAgentManifest } from "@feudal/acp";
 import type { TaskRecord, TaskStatus } from "@feudal/contracts";
 import { AgentRegistryPanel } from "./components/agent-registry-panel";
 import { ApprovalInboxPanel } from "./components/approval-inbox-panel";
+import { DiffInspectorPanel } from "./components/diff-inspector-panel";
 import { NewTaskPanel } from "./components/new-task-panel";
 import { TaskDetailPanel } from "./components/task-detail-panel";
+import { TimelinePanel } from "./components/timeline-panel";
 import {
   approveTask,
   createTask,
   fetchAgents,
+  fetchRecoverySummary,
+  fetchTaskDiffs,
+  fetchTaskEvents,
+  fetchTaskReplay,
   fetchTasks,
-  type CreateTaskInput
+  type CreateTaskInput,
+  type RecoverySummary,
+  type TaskConsoleRecord,
+  type TaskDiffEntry,
+  type TaskEventSummary
 } from "./lib/api";
 
 const laneOrder: TaskStatus[] = [
@@ -43,8 +53,17 @@ const laneLabels: Record<TaskStatus, string> = {
 };
 
 export function App() {
-  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskConsoleRecord[]>([]);
   const [agents, setAgents] = useState<ACPAgentManifest[]>([]);
+  const [taskEvents, setTaskEvents] = useState<Record<string, TaskEventSummary[]>>({});
+  const [taskDiffs, setTaskDiffs] = useState<Record<string, TaskDiffEntry[]>>({});
+  const [taskReplay, setTaskReplay] = useState<
+    Record<string, Pick<TaskRecord, "id" | "title" | "status">>
+  >({});
+  const [recoverySummary, setRecoverySummary] = useState<RecoverySummary>({
+    tasksNeedingRecovery: 0,
+    runsNeedingRecovery: 0
+  });
   const [selectedTaskId, setSelectedTaskId] = useState<string>();
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -60,11 +79,16 @@ export function App() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([
-      fetchTasks(),
-      fetchAgents()
-    ])
-      .then(([nextTasks, nextAgents]) => {
+    Promise.all([fetchTasks(), fetchAgents(), fetchRecoverySummary()])
+      .then(async ([nextTasks, nextAgents, nextRecovery]) => {
+        const initialTaskId = nextTasks[0]?.id;
+        const [initialEvents, initialDiffs] = initialTaskId
+          ? await Promise.all([
+              fetchTaskEvents(initialTaskId),
+              fetchTaskDiffs(initialTaskId)
+            ])
+          : [[], []];
+
         if (!active) {
           return;
         }
@@ -72,7 +96,12 @@ export function App() {
         startTransition(() => {
           setTasks(nextTasks);
           setAgents(nextAgents);
-          setSelectedTaskId((current) => current ?? nextTasks[0]?.id);
+          setRecoverySummary(nextRecovery);
+          setSelectedTaskId((current) => current ?? initialTaskId);
+          if (initialTaskId) {
+            setTaskEvents((current) => ({ ...current, [initialTaskId]: initialEvents }));
+            setTaskDiffs((current) => ({ ...current, [initialTaskId]: initialDiffs }));
+          }
           setError(undefined);
         });
       })
@@ -93,15 +122,55 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const taskId = selectedTaskId ?? tasks[0]?.id;
+
+    if (!taskId || (taskEvents[taskId] && taskDiffs[taskId])) {
+      return;
+    }
+
+    let active = true;
+
+    Promise.all([fetchTaskEvents(taskId), fetchTaskDiffs(taskId)])
+      .then(([nextEvents, nextDiffs]) => {
+        if (!active) {
+          return;
+        }
+
+        startTransition(() => {
+          setTaskEvents((current) => ({ ...current, [taskId]: nextEvents }));
+          setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs }));
+        });
+      })
+      .catch((nextError: unknown) => {
+        if (!active) {
+          return;
+        }
+
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Unable to load replay data."
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedTaskId, taskDiffs, taskEvents, tasks]);
+
   const selectedTask =
     tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
+  const selectedTaskEvents = selectedTask ? taskEvents[selectedTask.id] ?? [] : [];
+  const selectedTaskDiffs = selectedTask ? taskDiffs[selectedTask.id] ?? [] : [];
+  const selectedReplayTask = selectedTask ? taskReplay[selectedTask.id] : undefined;
   const awaitingTasks = tasks.filter((task) => task.status === "awaiting_approval");
   const canSubmit =
     draft.title.trim().length > 0 &&
     draft.prompt.trim().length > 0 &&
     !isSubmitting;
 
-  function upsertTask(nextTask: TaskRecord) {
+  function upsertTask(nextTask: TaskConsoleRecord) {
     setTasks((current) => {
       const existingIndex = current.findIndex((task) => task.id === nextTask.id);
 
@@ -184,6 +253,23 @@ export function App() {
     }
   }
 
+  async function handleReplay(taskId: string, eventId: number) {
+    try {
+      const replay = await fetchTaskReplay(taskId, eventId);
+
+      startTransition(() => {
+        setTaskReplay((current) => ({ ...current, [taskId]: replay.task }));
+        setError(undefined);
+      });
+    } catch (nextError: unknown) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Unable to replay the selected task snapshot."
+      );
+    }
+  }
+
   return (
     <div className="shell">
       <header className="hero">
@@ -217,6 +303,12 @@ export function App() {
               <strong>{selectedTask?.runs.length ?? 0}</strong>
               <span>Tracked ACP runs</span>
             </article>
+            <article>
+              <strong>
+                {recoverySummary.tasksNeedingRecovery + recoverySummary.runsNeedingRecovery}
+              </strong>
+              <span>Recovery Required</span>
+            </article>
           </div>
 
           <div className="lane-grid" aria-label="Workflow swimlanes">
@@ -244,6 +336,15 @@ export function App() {
           }
         />
         <TaskDetailPanel laneLabels={laneLabels} selectedTask={selectedTask} />
+        <TimelinePanel
+          events={selectedTaskEvents}
+          onReplay={(eventId) =>
+            selectedTask ? handleReplay(selectedTask.id, eventId) : undefined
+          }
+          replayTask={selectedReplayTask}
+          taskTitle={selectedTask?.title ?? "Task"}
+        />
+        <DiffInspectorPanel diffs={selectedTaskDiffs} />
         <ApprovalInboxPanel
           activeApprovalId={activeApprovalId}
           onApprove={handleApprove}

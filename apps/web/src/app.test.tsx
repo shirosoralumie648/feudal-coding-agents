@@ -67,6 +67,17 @@ function mockConsoleApi(options?: {
   initialTasks?: TaskRecord[];
   createdTask?: TaskRecord;
   approvedTask?: TaskRecord;
+  recoverySummary?: {
+    tasksNeedingRecovery: number;
+    runsNeedingRecovery: number;
+  };
+  events?: Array<{ id: number; eventType: string; occurredAt: string }>;
+  diffs?: Array<{
+    id: number;
+    changedPaths: string[];
+    afterSubsetJson: Record<string, unknown>;
+  }>;
+  replay?: { task: Pick<TaskRecord, "id" | "title" | "status"> };
 }) {
   const agents = options?.agents ?? defaultAgents;
   let tasks = options?.initialTasks ?? [defaultTask];
@@ -81,6 +92,27 @@ function mockConsoleApi(options?: {
 
     if (url.endsWith("/api/agents") && method === "GET") {
       return json(agents);
+    }
+
+    if (url.endsWith("/api/recovery/summary") && method === "GET") {
+      return json(
+        options?.recoverySummary ?? {
+          tasksNeedingRecovery: 0,
+          runsNeedingRecovery: 0
+        }
+      );
+    }
+
+    if (url.endsWith(`/api/tasks/${defaultTask.id}/events`) && method === "GET") {
+      return json(options?.events ?? []);
+    }
+
+    if (url.endsWith(`/api/tasks/${defaultTask.id}/diffs`) && method === "GET") {
+      return json(options?.diffs ?? []);
+    }
+
+    if (url.includes(`/api/tasks/${defaultTask.id}/replay`) && method === "GET") {
+      return json(options?.replay ?? { task: defaultTask });
     }
 
     if (url.endsWith("/api/tasks") && method === "POST") {
@@ -239,5 +271,39 @@ describe("App", () => {
       "/api/tasks",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("shows recovery badges, timeline events, and diff details for the selected task", async () => {
+    mockConsoleApi({
+      recoverySummary: { tasksNeedingRecovery: 1, runsNeedingRecovery: 1 },
+      events: [
+        {
+          id: 7,
+          eventType: "task.approval_requested",
+          occurredAt: "2026-04-03T10:00:00.000Z"
+        }
+      ],
+      diffs: [
+        {
+          id: 8,
+          changedPaths: ["/approvalRequest/prompt"],
+          afterSubsetJson: { prompt: "Approve the decision brief?" }
+        }
+      ],
+      replay: {
+        task: {
+          id: "task-1",
+          title: "Build dashboard",
+          status: "awaiting_approval"
+        }
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Recovery Required")).toBeVisible();
+    expect(screen.getByText("task.approval_requested")).toBeVisible();
+    expect(screen.getByText("/approvalRequest/prompt")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Replay Build dashboard" })).toBeVisible();
   });
 });
