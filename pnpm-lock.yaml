@@ -45,6 +45,9 @@ importers:
       '@feudal/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
+      '@feudal/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
       fastify:
         specifier: ^5.0.0
         version: 5.8.4

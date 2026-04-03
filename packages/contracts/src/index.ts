@@ -80,6 +80,23 @@ export const TaskApprovalRequestSchema = z.object({
   actions: z.array(z.string())
 });
 
+export const AuditEventSchema = z.object({
+  id: z.number(),
+  streamType: z.string(),
+  streamId: z.string(),
+  eventType: z.string(),
+  eventVersion: z.number(),
+  occurredAt: z.string(),
+  payloadJson: z.record(z.string(), z.unknown()),
+  metadataJson: z.record(z.string(), z.unknown())
+});
+
+export const RecoveryStateSchema = z.enum([
+  "healthy",
+  "replaying",
+  "recovery_required"
+]);
+
 export const TaskRecordSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -102,4 +119,6 @@ export type ACPRunSummaryStatus = z.infer<typeof ACPRunSummaryStatusSchema>;
 export type ACPRunSummaryPhase = z.infer<typeof ACPRunSummaryPhaseSchema>;
 export type ACPRunSummary = z.infer<typeof ACPRunSummarySchema>;
 export type TaskApprovalRequest = z.infer<typeof TaskApprovalRequestSchema>;
+export type AuditEvent = z.infer<typeof AuditEventSchema>;
+export type RecoveryState = z.infer<typeof RecoveryStateSchema>;
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;

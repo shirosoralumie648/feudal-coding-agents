@@ -2,8 +2,11 @@ import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import type { ACPClient, ACPRunAgentInput } from "@feudal/acp";
 import { createMockACPClient } from "@feudal/acp/mock-client";
+import { TaskRecordSchema } from "@feudal/contracts";
 import { registerTaskRoutes } from "./tasks";
 import { registerAgentRoutes } from "./agents";
+import { buildTaskEventInputs } from "../persistence/task-event-codec";
+import { createTaskReadModel } from "../persistence/task-read-model";
 import { createOrchestratorService } from "../services/orchestrator-service";
 
 function createApp() {
@@ -48,6 +51,137 @@ function createExecutorFlakyClient(failuresBeforeSuccess: number) {
 }
 
 describe("control-plane routes", () => {
+  it("returns recovery and event metadata on task creation", async () => {
+    const app = createAppWithClient(createMockACPClient());
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Build dashboard",
+        prompt: "Create the dashboard task",
+        allowMock: false,
+        requiresApproval: true,
+        sensitivity: "medium"
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().recoveryState).toBe("healthy");
+    expect(response.json().latestEventId).toBeGreaterThan(0);
+    expect(response.json().latestProjectionVersion).toBeGreaterThan(0);
+  });
+
+  it("keeps the latest event version after rebuilding projections", async () => {
+    const task = TaskRecordSchema.parse({
+      id: "task-rebuild",
+      title: "Build dashboard",
+      prompt: "Create the dashboard task",
+      status: "awaiting_approval",
+      artifacts: [],
+      history: [],
+      runIds: ["run-approval"],
+      approvalRunId: "run-approval",
+      runs: [],
+      approvalRequest: {
+        runId: "run-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      },
+      createdAt: "2026-04-03T00:00:00.000Z",
+      updatedAt: "2026-04-03T00:00:00.000Z"
+    });
+    const [businessEvent, diffEvent] = buildTaskEventInputs(task, "task.created");
+    const rows = new Map<
+      string,
+      {
+        recovery_state: string;
+        recovery_reason: string | null;
+        last_recovered_at: string;
+        latest_event_id: number;
+        latest_projection_version: number;
+        payload_json: unknown;
+      }
+    >();
+    let checkpoint: number | undefined;
+    const eventStore = {
+      async readCheckpoint() {
+        return checkpoint;
+      },
+
+      async loadAfter() {
+        return [
+          {
+            id: 1,
+            streamType: "task",
+            streamId: task.id,
+            eventType: businessEvent.eventType,
+            eventVersion: 1,
+            occurredAt: task.updatedAt,
+            payloadJson: businessEvent.payloadJson,
+            metadataJson: businessEvent.metadataJson
+          },
+          {
+            id: 2,
+            streamType: "task",
+            streamId: task.id,
+            eventType: diffEvent.eventType,
+            eventVersion: 2,
+            occurredAt: task.updatedAt,
+            payloadJson: diffEvent.payloadJson,
+            metadataJson: diffEvent.metadataJson
+          }
+        ];
+      },
+
+      async writeCheckpoint(_projectionName: string, lastEventId: number) {
+        checkpoint = lastEventId;
+      },
+
+      async withTransaction<T>(
+        work: (tx: {
+          query: (sql: string, values?: unknown[]) => Promise<{ rows: unknown[] }>;
+        }) => Promise<T>
+      ) {
+        const tx = {
+          query: async (sql: string, values: unknown[] = []) => {
+            if (sql.includes("insert into tasks_current")) {
+              rows.set(String(values[0]), {
+                recovery_state: String(values[4]),
+                recovery_reason: (values[5] as string | null | undefined) ?? null,
+                last_recovered_at: String(values[6]),
+                latest_event_id: Number(values[7]),
+                latest_projection_version: Number(values[8]),
+                payload_json: values[9]
+              });
+              return { rows: [] };
+            }
+
+            if (sql.includes("select recovery_state")) {
+              const taskId = values[0] as string | undefined;
+              const row = taskId ? rows.get(taskId) : undefined;
+              return { rows: row ? [row] : [] };
+            }
+
+            throw new Error(`Unexpected SQL: ${sql}`);
+          }
+        };
+
+        return work(tx);
+      }
+    };
+    const readModel = createTaskReadModel({
+      eventStore: eventStore as Parameters<typeof createTaskReadModel>[0]["eventStore"]
+    });
+
+    await readModel.rebuildProjectionsIfNeeded();
+
+    const rebuilt = await readModel.getTask(task.id);
+
+    expect(rebuilt?.latestEventId).toBe(2);
+    expect(rebuilt?.latestProjectionVersion).toBe(2);
+  });
+
   it("returns ACP run summaries and approval prompt data on task creation", async () => {
     const app = createApp();
 

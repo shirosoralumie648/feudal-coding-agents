@@ -1,6 +1,13 @@
 import { createHttpACPClient } from "@feudal/acp/http-client";
 import { createMockACPClient } from "@feudal/acp/mock-client";
+import {
+  createPostgresEventStore,
+  createPostgresPool,
+  runMigrations
+} from "@feudal/persistence";
+import { createTaskReadModel } from "./persistence/task-read-model";
 import { createOrchestratorService } from "./services/orchestrator-service";
+import { MemoryTaskStore, type TaskStore } from "./store";
 
 export function createACPClientFromEnv() {
   const baseUrl = process.env.ACP_BASE_URL ?? "http://127.0.0.1:4100";
@@ -13,6 +20,74 @@ export function createACPClientFromEnv() {
   return createHttpACPClient({ baseUrl });
 }
 
+export async function createTaskStoreFromEnv() {
+  if (!process.env.DATABASE_URL) {
+    return new MemoryTaskStore();
+  }
+
+  const pool = createPostgresPool();
+  await runMigrations(pool);
+  const eventStore = createPostgresEventStore({ pool });
+  return createTaskReadModel({ eventStore });
+}
+
+function createLazyTaskStore(
+  loadStore: () => Promise<TaskStore> = createTaskStoreFromEnv
+): TaskStore {
+  let storePromise: Promise<TaskStore> | undefined;
+
+  const getStore = () => {
+    storePromise ??= loadStore().catch((error) => {
+      storePromise = undefined;
+      throw error;
+    });
+    return storePromise;
+  };
+
+  return {
+    async listTasks() {
+      return (await getStore()).listTasks();
+    },
+
+    async getTask(taskId) {
+      return (await getStore()).getTask(taskId);
+    },
+
+    async saveTask(task, eventType, expectedVersion) {
+      return (await getStore()).saveTask(task, eventType, expectedVersion);
+    },
+
+    async listTaskEvents(taskId) {
+      return (await getStore()).listTaskEvents(taskId);
+    },
+
+    async listTaskDiffs(taskId) {
+      return (await getStore()).listTaskDiffs(taskId);
+    },
+
+    async listTaskRuns(taskId) {
+      return (await getStore()).listTaskRuns(taskId);
+    },
+
+    async listTaskArtifacts(taskId) {
+      return (await getStore()).listTaskArtifacts(taskId);
+    },
+
+    async replayTaskAtEventId(taskId, eventId) {
+      return (await getStore()).replayTaskAtEventId(taskId, eventId);
+    },
+
+    async getRecoverySummary() {
+      return (await getStore()).getRecoverySummary();
+    },
+
+    async rebuildProjectionsIfNeeded() {
+      await (await getStore()).rebuildProjectionsIfNeeded();
+    }
+  };
+}
+
 export const defaultOrchestratorService = createOrchestratorService({
-  acpClient: createACPClientFromEnv()
+  acpClient: createACPClientFromEnv(),
+  store: createLazyTaskStore()
 });

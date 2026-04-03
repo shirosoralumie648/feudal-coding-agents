@@ -12,7 +12,7 @@ export function registerTaskRoutes(
 
   app.get("/api/tasks/:taskId", async (request, reply) => {
     const params = z.object({ taskId: z.string() }).parse(request.params);
-    const task = service.getTask(params.taskId);
+    const task = await service.getTask(params.taskId);
 
     if (!task) {
       return reply.code(404).send({ message: "Task not found" });
@@ -27,13 +27,13 @@ export function registerTaskRoutes(
       ...request.body
     });
 
-    const task = await service.createTask(payload);
-    return reply.code(201).send(task);
+    const projection = await service.createTask(payload);
+    return reply.code(201).send(projection);
   });
 
   app.post("/api/tasks/:taskId/approve", async (request, reply) => {
     const params = z.object({ taskId: z.string() }).parse(request.params);
-    const task = service.getTask(params.taskId);
+    const task = await service.getTask(params.taskId);
 
     if (!task) {
       return reply.code(404).send({ message: "Task not found" });

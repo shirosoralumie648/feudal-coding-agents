@@ -6,13 +6,14 @@ import type {
   TaskSpec
 } from "@feudal/contracts";
 import { transitionTask } from "@feudal/orchestrator";
-import { MemoryStore } from "../store";
+import type { TaskProjectionRecord } from "../persistence/task-read-model";
+import { MemoryTaskStore, type TaskStore } from "../store";
 
 export interface OrchestratorService {
-  createTask(spec: TaskSpec): Promise<TaskRecord>;
-  approveTask(taskId: string): Promise<TaskRecord>;
-  listTasks(): TaskRecord[];
-  getTask(taskId: string): TaskRecord | undefined;
+  createTask(spec: TaskSpec): Promise<TaskProjectionRecord>;
+  approveTask(taskId: string): Promise<TaskProjectionRecord>;
+  listTasks(): Promise<TaskProjectionRecord[]>;
+  getTask(taskId: string): Promise<TaskProjectionRecord | undefined>;
   listAgents(): ReturnType<ACPClient["listAgents"]>;
 }
 
@@ -44,7 +45,7 @@ function toRunSummary(
   };
 }
 
-function newTask(spec: TaskSpec): TaskRecord {
+function newTask(spec: TaskSpec): TaskProjectionRecord {
   const now = new Date().toISOString();
 
   return {
@@ -57,26 +58,42 @@ function newTask(spec: TaskSpec): TaskRecord {
     runIds: [],
     runs: [],
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    recoveryState: "healthy",
+    latestEventId: 0,
+    latestProjectionVersion: 0
   };
 }
 
 export function createOrchestratorService(options: {
   acpClient: ACPClient;
-  store?: MemoryStore;
+  store?: TaskStore;
 }): OrchestratorService {
   const acp = options.acpClient;
-  const store = options.store ?? new MemoryStore();
+  const store = options.store ?? new MemoryTaskStore();
 
   return {
-    async createTask(spec: TaskSpec): Promise<TaskRecord> {
+    async createTask(spec: TaskSpec): Promise<TaskProjectionRecord> {
       let task = transitionTask(newTask(spec), { type: "task.submitted" });
+      let latestProjectionVersion = 0;
+      const persistTask = async (taskSnapshot: TaskRecord, eventType: string) => {
+        const projection = await store.saveTask(
+          taskSnapshot,
+          eventType,
+          latestProjectionVersion
+        );
+        latestProjectionVersion = projection.latestProjectionVersion;
+        return projection;
+      };
+
+      await persistTask(task, "task.submitted");
 
       const intakeRun = await acp.runAgent({
         agent: "intake-agent",
         messages: [{ role: "user", content: spec.prompt }]
       });
       task = transitionTask(task, { type: "intake.completed" });
+      await persistTask(task, "task.intake_completed");
 
       const analystRun = await acp.runAgent({
         agent: "analyst-agent",
@@ -88,6 +105,7 @@ export function createOrchestratorService(options: {
         ]
       });
       task = transitionTask(task, { type: "planning.completed" });
+      await persistTask(task, "task.planning_completed");
 
       const [auditorRun, criticRun] = await Promise.all([
         acp.runAgent({
@@ -111,6 +129,7 @@ export function createOrchestratorService(options: {
       ]);
 
       task = transitionTask(task, { type: "review.approved" });
+      await persistTask(task, "task.review_approved");
 
       const approvalRun = await acp.awaitExternalInput({
         label: "approval-gate",
@@ -160,15 +179,25 @@ export function createOrchestratorService(options: {
         }
       };
 
-      return store.saveTask(task);
+      return persistTask(task, "task.awaiting_approval");
     },
 
-    async approveTask(taskId: string): Promise<TaskRecord> {
-      const current = store.getTask(taskId);
+    async approveTask(taskId: string): Promise<TaskProjectionRecord> {
+      const current = await store.getTask(taskId);
 
       if (!current || !current.approvalRunId) {
         throw new Error(`Task ${taskId} is not awaiting approval`);
       }
+      let latestProjectionVersion = current.latestProjectionVersion;
+      const persistTask = async (taskSnapshot: TaskRecord, eventType: string) => {
+        const projection = await store.saveTask(
+          taskSnapshot,
+          eventType,
+          latestProjectionVersion
+        );
+        latestProjectionVersion = projection.latestProjectionVersion;
+        return projection;
+      };
 
       const resumedApprovalRun = await acp.respondToAwait(current.approvalRunId, {
         role: "user",
@@ -184,6 +213,7 @@ export function createOrchestratorService(options: {
           run.id === resumedApprovalRun.id ? toRunSummary(resumedApprovalRun, "approval") : run
         )
       };
+      await persistTask(task, "task.approved");
 
       const executorInput = {
         agent: "gongbu-executor",
@@ -203,7 +233,7 @@ export function createOrchestratorService(options: {
           transitionTask(task, { type: "dispatch.completed" }),
           { type: "execution.failed" }
         );
-        return store.saveTask(failedTask);
+        return persistTask(failedTask, "task.execution_failed");
       }
 
       task = transitionTask(task, { type: "dispatch.completed" });
@@ -254,14 +284,14 @@ export function createOrchestratorService(options: {
         ]
       };
 
-      return store.saveTask(task);
+      return persistTask(task, `task.${task.status}`);
     },
 
-    listTasks(): TaskRecord[] {
+    async listTasks() {
       return store.listTasks();
     },
 
-    getTask(taskId: string): TaskRecord | undefined {
+    async getTask(taskId: string) {
       return store.getTask(taskId);
     },
 

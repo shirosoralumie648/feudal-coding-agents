@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { TaskRecordSchema, TaskSpecSchema, TaskStatusSchema } from "./index";
+import {
+  AuditEventSchema,
+  RecoveryStateSchema,
+  TaskRecordSchema,
+  TaskSpecSchema,
+  TaskStatusSchema
+} from "./index";
 
 describe("contracts", () => {
   it("accepts a new task spec", () => {
@@ -50,5 +56,22 @@ describe("contracts", () => {
 
     expect(result.runs[0]?.phase).toBe("review");
     expect(result.approvalRequest?.runId).toBe("run-1");
+  });
+
+  it("accepts audit event and recovery state metadata", () => {
+    const recoveryState = RecoveryStateSchema.parse("healthy");
+    const event = AuditEventSchema.parse({
+      id: 1,
+      streamType: "task",
+      streamId: "task-1",
+      eventType: "task.created",
+      eventVersion: 1,
+      occurredAt: "2026-04-03T00:00:00.000Z",
+      payloadJson: { status: "draft" },
+      metadataJson: { actorType: "control-plane" }
+    });
+
+    expect(recoveryState).toBe("healthy");
+    expect(event.eventType).toBe("task.created");
   });
 });

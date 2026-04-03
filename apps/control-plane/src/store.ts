@@ -1,18 +1,156 @@
-import type { TaskRecord } from "@feudal/contracts";
+import type {
+  ACPRunSummary,
+  AuditEvent,
+  TaskArtifact,
+  TaskRecord
+} from "@feudal/contracts";
+import {
+  buildTaskEventInputs,
+  isTaskDiffEvent,
+  taskFromAuditEvent,
+  toTaskProjectionRecord
+} from "./persistence/task-event-codec";
+import type { TaskProjectionRecord } from "./persistence/task-read-model";
 
-export class MemoryStore {
-  private readonly tasks = new Map<string, TaskRecord>();
+function toEventVersionMismatchError(taskId: string) {
+  return new Error(`Event version mismatch for task:${taskId}`);
+}
 
-  listTasks(): TaskRecord[] {
+export interface TaskStore {
+  listTasks(): Promise<TaskProjectionRecord[]>;
+  getTask(taskId: string): Promise<TaskProjectionRecord | undefined>;
+  saveTask(
+    task: TaskRecord,
+    eventType: string,
+    expectedVersion: number
+  ): Promise<TaskProjectionRecord>;
+  listTaskEvents(taskId: string): Promise<AuditEvent[] | undefined>;
+  listTaskDiffs(taskId: string): Promise<AuditEvent[] | undefined>;
+  listTaskRuns(taskId: string): Promise<ACPRunSummary[] | undefined>;
+  listTaskArtifacts(taskId: string): Promise<TaskArtifact[] | undefined>;
+  replayTaskAtEventId(
+    taskId: string,
+    eventId: number
+  ): Promise<{ task: TaskProjectionRecord } | undefined>;
+  getRecoverySummary(): Promise<{
+    tasksNeedingRecovery: number;
+    runsNeedingRecovery: number;
+  }>;
+  rebuildProjectionsIfNeeded(): Promise<void>;
+}
+
+export class MemoryTaskStore implements TaskStore {
+  private readonly tasks = new Map<string, TaskProjectionRecord>();
+  private readonly events = new Map<string, AuditEvent[]>();
+  private nextEventId = 1;
+
+  async listTasks() {
     return [...this.tasks.values()];
   }
 
-  getTask(taskId: string): TaskRecord | undefined {
+  async getTask(taskId: string) {
     return this.tasks.get(taskId);
   }
 
-  saveTask(task: TaskRecord): TaskRecord {
-    this.tasks.set(task.id, task);
-    return task;
+  async saveTask(task: TaskRecord, eventType: string, expectedVersion: number) {
+    const existingEvents = this.events.get(task.id) ?? [];
+    const currentVersion = existingEvents.at(-1)?.eventVersion ?? 0;
+    const previousTask = this.tasks.get(task.id);
+
+    if (currentVersion !== expectedVersion) {
+      throw toEventVersionMismatchError(task.id);
+    }
+
+    const occurredAt = task.updatedAt;
+    const appendedEvents = buildTaskEventInputs(task, eventType, previousTask).map(
+      (event, offset) => ({
+        id: this.nextEventId++,
+        streamType: "task",
+        streamId: task.id,
+        eventType: event.eventType,
+        eventVersion: expectedVersion + offset + 1,
+        occurredAt,
+        payloadJson: event.payloadJson,
+        metadataJson: event.metadataJson
+      })
+    ) satisfies AuditEvent[];
+    const latestEvent = appendedEvents.at(-1);
+    const projection = toTaskProjectionRecord({
+      task,
+      latestEventId: latestEvent?.id ?? 0,
+      latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
+    });
+
+    this.events.set(task.id, [...existingEvents, ...appendedEvents]);
+    this.tasks.set(task.id, projection);
+
+    return projection;
   }
+
+  async listTaskEvents(taskId: string) {
+    if (!this.tasks.has(taskId)) {
+      return undefined;
+    }
+
+    return [...(this.events.get(taskId) ?? [])];
+  }
+
+  async listTaskDiffs(taskId: string) {
+    const events = await this.listTaskEvents(taskId);
+    return events?.filter((event) => isTaskDiffEvent(event));
+  }
+
+  async listTaskRuns(taskId: string) {
+    return (await this.getTask(taskId))?.runs;
+  }
+
+  async listTaskArtifacts(taskId: string) {
+    return (await this.getTask(taskId))?.artifacts;
+  }
+
+  async replayTaskAtEventId(taskId: string, eventId: number) {
+    const taskEvents = await this.listTaskEvents(taskId);
+
+    if (!taskEvents) {
+      return undefined;
+    }
+
+    const events = taskEvents.filter((event) => event.id <= eventId);
+    const latestEvent = events.at(-1);
+
+    if (!latestEvent) {
+      return undefined;
+    }
+
+    let latestTask: TaskRecord | undefined;
+
+    for (const event of events) {
+      const task = taskFromAuditEvent(event);
+
+      if (task) {
+        latestTask = task;
+      }
+    }
+
+    if (!latestTask) {
+      return undefined;
+    }
+
+    return {
+      task: toTaskProjectionRecord({
+        task: latestTask,
+        latestEventId: latestEvent.id,
+        latestProjectionVersion: latestEvent.eventVersion
+      })
+    };
+  }
+
+  async getRecoverySummary() {
+    return {
+      tasksNeedingRecovery: 0,
+      runsNeedingRecovery: 0
+    };
+  }
+
+  async rebuildProjectionsIfNeeded() {}
 }
