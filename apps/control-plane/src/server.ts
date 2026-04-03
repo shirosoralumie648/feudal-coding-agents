@@ -1,16 +1,29 @@
+import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { defaultOrchestratorService } from "./config";
 import { registerAgentRoutes } from "./routes/agents";
 import { registerTaskRoutes } from "./routes/tasks";
+import type { OrchestratorService } from "./services/orchestrator-service";
 
-const app = Fastify({ logger: true });
+export function createControlPlaneApp(options?: {
+  logger?: boolean;
+  service?: OrchestratorService;
+}) {
+  const app = Fastify({ logger: options?.logger ?? true });
+  const service = options?.service ?? defaultOrchestratorService;
 
-registerAgentRoutes(app, defaultOrchestratorService);
-registerTaskRoutes(app, defaultOrchestratorService);
+  registerAgentRoutes(app, service);
+  registerTaskRoutes(app, service);
 
-const port = Number(process.env.PORT ?? 4000);
+  return app;
+}
 
-app.listen({ host: "0.0.0.0", port }).catch((error) => {
-  app.log.error(error);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const app = createControlPlaneApp();
+  const port = Number(process.env.PORT ?? 4000);
+
+  app.listen({ host: "0.0.0.0", port }).catch((error) => {
+    app.log.error(error);
+    process.exit(1);
+  });
+}

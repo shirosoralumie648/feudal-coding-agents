@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "dev": "pnpm --parallel --filter @feudal/control-plane --filter @feudal/web dev",
+    "dev": "pnpm --parallel --filter @feudal/acp-gateway --filter @feudal/control-plane --filter @feudal/web dev",
     "build": "pnpm --filter @feudal/web build",
     "test": "pnpm exec vitest run --config vitest.config.ts",
     "e2e": "pnpm --filter @feudal/web exec playwright test"
