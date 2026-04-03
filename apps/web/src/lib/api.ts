@@ -34,6 +34,16 @@ export interface RecoverySummary {
   runsNeedingRecovery: number;
 }
 
+interface TaskDiffApiRecord {
+  id: number;
+  changedPaths?: string[];
+  afterSubsetJson?: Record<string, unknown>;
+  payloadJson?: {
+    changedPaths?: unknown;
+    afterSubsetJson?: unknown;
+  };
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
 
@@ -42,6 +52,30 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toTaskDiffEntry(diff: TaskDiffApiRecord): TaskDiffEntry {
+  const payload = isRecord(diff.payloadJson) ? diff.payloadJson : undefined;
+  const changedPathsSource =
+    payload && Array.isArray(payload.changedPaths)
+      ? payload.changedPaths
+      : diff.changedPaths;
+  const afterSubsetSource =
+    payload && isRecord(payload.afterSubsetJson)
+      ? payload.afterSubsetJson
+      : diff.afterSubsetJson;
+
+  return {
+    id: diff.id,
+    changedPaths: Array.isArray(changedPathsSource)
+      ? changedPathsSource.filter((path): path is string => typeof path === "string")
+      : [],
+    afterSubsetJson: isRecord(afterSubsetSource) ? afterSubsetSource : {}
+  };
 }
 
 export async function fetchTasks() {
@@ -71,7 +105,8 @@ export async function fetchTaskEvents(taskId: string) {
 }
 
 export async function fetchTaskDiffs(taskId: string) {
-  return requestJson<TaskDiffEntry[]>(`/api/tasks/${taskId}/diffs`);
+  const diffs = await requestJson<TaskDiffApiRecord[]>(`/api/tasks/${taskId}/diffs`);
+  return diffs.map(toTaskDiffEntry);
 }
 
 export async function fetchTaskReplay(taskId: string, asOfEventId: number) {

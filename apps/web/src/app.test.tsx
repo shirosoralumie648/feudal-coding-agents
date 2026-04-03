@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ACPAgentManifest } from "@feudal/acp";
 import type { TaskRecord } from "@feudal/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,6 +62,15 @@ function json(data: unknown, status = 200) {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return { promise, resolve };
+}
+
 function mockConsoleApi(options?: {
   agents?: ACPAgentManifest[];
   initialTasks?: TaskRecord[];
@@ -78,6 +87,7 @@ function mockConsoleApi(options?: {
     afterSubsetJson: Record<string, unknown>;
   }>;
   replay?: { task: Pick<TaskRecord, "id" | "title" | "status"> };
+  tasksResponse?: Promise<Response>;
 }) {
   const agents = options?.agents ?? defaultAgents;
   let tasks = options?.initialTasks ?? [defaultTask];
@@ -85,9 +95,12 @@ function mockConsoleApi(options?: {
   const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     const method = init?.method ?? "GET";
+    const taskEventMatch = url.match(/\/api\/tasks\/([^/]+)\/events$/);
+    const taskDiffMatch = url.match(/\/api\/tasks\/([^/]+)\/diffs$/);
+    const taskReplayMatch = url.match(/\/api\/tasks\/([^/]+)\/replay/);
 
     if (url.endsWith("/api/tasks") && method === "GET") {
-      return json(tasks);
+      return options?.tasksResponse ?? json(tasks);
     }
 
     if (url.endsWith("/api/agents") && method === "GET") {
@@ -103,16 +116,18 @@ function mockConsoleApi(options?: {
       );
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/events`) && method === "GET") {
+    if (taskEventMatch && method === "GET") {
       return json(options?.events ?? []);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/diffs`) && method === "GET") {
+    if (taskDiffMatch && method === "GET") {
       return json(options?.diffs ?? []);
     }
 
-    if (url.includes(`/api/tasks/${defaultTask.id}/replay`) && method === "GET") {
-      return json(options?.replay ?? { task: defaultTask });
+    if (taskReplayMatch && method === "GET") {
+      const replayTaskId = taskReplayMatch[1];
+      const replayTask = tasks.find((task) => task.id === replayTaskId) ?? defaultTask;
+      return json(options?.replay ?? { task: replayTask });
     }
 
     if (url.endsWith("/api/tasks") && method === "POST") {
@@ -271,6 +286,68 @@ describe("App", () => {
       "/api/tasks",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("preserves a created task when the initial task load resolves late", async () => {
+    const initialTasks = deferred<Response>();
+    const createdTask: TaskRecord = {
+      ...defaultTask,
+      id: "task-2",
+      title: "Stabilize replay recovery",
+      prompt: "Verify restart recovery and replay reporting in the console.",
+      runIds: ["run-2"],
+      approvalRunId: "await-2",
+      approvalRequest: {
+        runId: "await-2",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      }
+    };
+
+    mockConsoleApi({
+      initialTasks: [],
+      createdTask,
+      tasksResponse: initialTasks.promise
+    });
+
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: createdTask.title }
+    });
+    fireEvent.change(screen.getByLabelText("Prompt"), {
+      target: { value: createdTask.prompt }
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Submit task" })).toBeEnabled()
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit task" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 3,
+        name: createdTask.title
+      })
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: `Approve ${createdTask.title}` })
+    ).toBeVisible();
+
+    await act(async () => {
+      initialTasks.resolve(await json([]));
+    });
+
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: createdTask.title
+      })
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: `Approve ${createdTask.title}` })
+    ).toBeVisible();
   });
 
   it("shows recovery badges, timeline events, and diff details for the selected task", async () => {

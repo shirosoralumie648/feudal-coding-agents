@@ -52,6 +52,21 @@ const laneLabels: Record<TaskStatus, string> = {
   rolled_back: "Rolled Back"
 };
 
+function mergeLoadedTasks(
+  currentTasks: TaskConsoleRecord[],
+  loadedTasks: TaskConsoleRecord[]
+) {
+  if (currentTasks.length === 0) {
+    return loadedTasks;
+  }
+
+  const currentTaskIds = new Set(currentTasks.map((task) => task.id));
+  return [
+    ...currentTasks,
+    ...loadedTasks.filter((task) => !currentTaskIds.has(task.id))
+  ];
+}
+
 export function App() {
   const [tasks, setTasks] = useState<TaskConsoleRecord[]>([]);
   const [agents, setAgents] = useState<ACPAgentManifest[]>([]);
@@ -94,7 +109,7 @@ export function App() {
         }
 
         startTransition(() => {
-          setTasks(nextTasks);
+          setTasks((current) => mergeLoadedTasks(current, nextTasks));
           setAgents(nextAgents);
           setRecoverySummary(nextRecovery);
           setSelectedTaskId((current) => current ?? initialTaskId);
