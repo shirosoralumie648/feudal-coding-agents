@@ -207,6 +207,10 @@ export function createRunReadModel(options: {
 
         await options.eventStore.writeCheckpoint("runs_current", events.at(-1)?.id ?? 0, tx);
       });
+    },
+
+    async rebuildProjectionsIfNeeded() {
+      await this.rebuild();
     }
   };
 }

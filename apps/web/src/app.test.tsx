@@ -301,6 +301,7 @@ describe("App", () => {
 
     render(<App />);
 
+    expect(screen.getByText("Recovery Clear")).toBeVisible();
     expect(await screen.findByText("Recovery Required")).toBeVisible();
     expect(screen.getByText("task.approval_requested")).toBeVisible();
     expect(screen.getByText("/approvalRequest/prompt")).toBeVisible();

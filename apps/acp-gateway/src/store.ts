@@ -48,6 +48,7 @@ function toEventVersionMismatchError(runId: string) {
 
 export interface GatewayRunStore {
   getRun(runId: string): Promise<GatewayRunProjectionRecord | undefined>;
+  rebuildProjectionsIfNeeded(): Promise<void>;
   saveRun(
     run: GatewayRunRecord,
     eventType: string,
@@ -103,4 +104,6 @@ export class GatewayStore implements GatewayRunStore {
   async getRun(runId: string) {
     return this.runs.get(runId);
   }
+
+  async rebuildProjectionsIfNeeded() {}
 }

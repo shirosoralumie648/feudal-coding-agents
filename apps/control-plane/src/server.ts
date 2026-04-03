@@ -8,6 +8,7 @@ import type { OrchestratorService } from "./services/orchestrator-service";
 
 export function createControlPlaneApp(options?: {
   logger?: boolean;
+  onReady?: () => Promise<void>;
   service?: OrchestratorService;
 }) {
   const app = Fastify({ logger: options?.logger ?? true });
@@ -16,6 +17,11 @@ export function createControlPlaneApp(options?: {
   registerAgentRoutes(app, service);
   registerTaskRoutes(app, service);
   registerReplayRoutes(app, service);
+
+  app.addHook("onReady", async () => {
+    await service.rebuildProjectionsIfNeeded();
+    await options?.onReady?.();
+  });
 
   return app;
 }

@@ -45,6 +45,10 @@ function createLazyGatewayStore(
       return (await getStore()).getRun(runId);
     },
 
+    async rebuildProjectionsIfNeeded() {
+      await (await getStore()).rebuildProjectionsIfNeeded();
+    },
+
     async saveRun(run, eventType, expectedVersion) {
       return (await getStore()).saveRun(run, eventType, expectedVersion);
     }
@@ -54,6 +58,7 @@ function createLazyGatewayStore(
 export function createGatewayApp(options?: {
   codexRunner?: CodexRunner;
   logger?: boolean;
+  onReady?: () => Promise<void>;
   repoRoot?: string;
   store?: GatewayRunStore;
 }) {
@@ -72,6 +77,11 @@ export function createGatewayApp(options?: {
         agent: payload.agent,
         messages: payload.messages
       })
+  });
+
+  app.addHook("onReady", async () => {
+    await store.rebuildProjectionsIfNeeded();
+    await options?.onReady?.();
   });
 
   return app;

@@ -165,6 +165,10 @@ export function App() {
   const selectedTaskDiffs = selectedTask ? taskDiffs[selectedTask.id] ?? [] : [];
   const selectedReplayTask = selectedTask ? taskReplay[selectedTask.id] : undefined;
   const awaitingTasks = tasks.filter((task) => task.status === "awaiting_approval");
+  const recoveryCount =
+    recoverySummary.tasksNeedingRecovery + recoverySummary.runsNeedingRecovery;
+  const recoveryLabel =
+    recoveryCount > 0 ? "Recovery Required" : "Recovery Clear";
   const canSubmit =
     draft.title.trim().length > 0 &&
     draft.prompt.trim().length > 0 &&
@@ -304,10 +308,8 @@ export function App() {
               <span>Tracked ACP runs</span>
             </article>
             <article>
-              <strong>
-                {recoverySummary.tasksNeedingRecovery + recoverySummary.runsNeedingRecovery}
-              </strong>
-              <span>Recovery Required</span>
+              <strong>{recoveryCount}</strong>
+              <span>{recoveryLabel}</span>
             </article>
           </div>
 
