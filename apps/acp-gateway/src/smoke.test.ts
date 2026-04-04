@@ -99,75 +99,83 @@ async function runSmokeScenario() {
   }
 }
 
-describe("phase 2 smoke flow", () => {
-  it("creates, approves, executes, and verifies through the gateway", async () => {
-    const result = await runSmokeScenario();
+async function runPersistedApprovalRestartScenario() {
+  const db = newDb();
+  const { Pool } = db.adapters.createPg();
+  const pool = new Pool();
+  await runMigrations(pool);
+  const eventStore = createPostgresEventStore({ pool });
+  const codexRunner = {
+    run: vi
+      .fn()
+      .mockResolvedValueOnce({ title: "Build dashboard", prompt: "Create dashboard" })
+      .mockResolvedValueOnce({ summary: "Plan and review the task." })
+      .mockResolvedValueOnce({ verdict: "approve", note: "No blocking issues." })
+      .mockResolvedValueOnce({ verdict: "approve", note: "Looks good." })
+      .mockResolvedValueOnce({
+        result: "completed",
+        output: "Executor finished the work."
+      })
+      .mockResolvedValueOnce({
+        result: "verified",
+        output: "Verifier accepted the work."
+      })
+  } satisfies CodexRunner;
+  const gatewayBaseUrl = "http://gateway.local";
+  let firstGateway = createGatewayApp({
+    logger: false,
+    codexRunner,
+    store: createRunReadModel({ eventStore })
+  });
+  let activeGateway = firstGateway;
+  let firstControlPlane:
+    | ReturnType<typeof createControlPlaneApp>
+    | undefined;
+  let restartedGateway:
+    | ReturnType<typeof createGatewayApp>
+    | undefined;
+  let restartedControlPlane:
+    | ReturnType<typeof createControlPlaneApp>
+    | undefined;
 
-    expect(result.created.status).toBe("awaiting_approval");
-    expect(result.approved.status).toBe("completed");
-    expect(result.approved.artifacts.map((artifact: { name: string }) => artifact.name)).toContain(
-      "execution-report.json"
-    );
+  await firstGateway.ready();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const requestUrl = new URL(url);
+
+      if (!url.startsWith(gatewayBaseUrl)) {
+        throw new Error(`Unexpected fetch target: ${url}`);
+      }
+
+      const response = await activeGateway.inject({
+        method: init?.method ?? "GET",
+        url: `${requestUrl.pathname}${requestUrl.search}`,
+        headers: init?.headers as Record<string, string> | undefined,
+        payload: init?.body
+      });
+
+      return new Response(response.body, {
+        status: response.statusCode,
+        headers: new Headers(
+          Object.entries(response.headers).map(([key, value]) => [key, String(value)])
+        )
+      });
+    })
+  );
+
+  firstControlPlane = createControlPlaneApp({
+    logger: false,
+    service: createOrchestratorService({
+      acpClient: createHttpACPClient({ baseUrl: gatewayBaseUrl }),
+      store: createTaskReadModel({ eventStore })
+    })
   });
 
-  it("rebuilds persisted state after a simulated restart", async () => {
-    const db = newDb();
-    const { Pool } = db.adapters.createPg();
-    const pool = new Pool();
-    await runMigrations(pool);
-    const eventStore = createPostgresEventStore({ pool });
-    const codexRunner = {
-      run: vi
-        .fn()
-        .mockResolvedValueOnce({ title: "Build dashboard", prompt: "Create dashboard" })
-        .mockResolvedValueOnce({ summary: "Plan and review the task." })
-        .mockResolvedValueOnce({ verdict: "approve", note: "No blocking issues." })
-        .mockResolvedValueOnce({ verdict: "approve", note: "Looks good." })
-    } satisfies CodexRunner;
-    const gatewayBaseUrl = "http://gateway.local";
-    const firstGateway = createGatewayApp({
-      logger: false,
-      codexRunner,
-      store: createRunReadModel({ eventStore })
-    });
+  await firstControlPlane.ready();
 
-    await firstGateway.ready();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-        const url = typeof input === "string" ? input : input.toString();
-        const requestUrl = new URL(url);
-
-        if (!url.startsWith(gatewayBaseUrl)) {
-          throw new Error(`Unexpected fetch target: ${url}`);
-        }
-
-        const response = await firstGateway.inject({
-          method: init?.method ?? "GET",
-          url: `${requestUrl.pathname}${requestUrl.search}`,
-          headers: init?.headers as Record<string, string> | undefined,
-          payload: init?.body
-        });
-
-        return new Response(response.body, {
-          status: response.statusCode,
-          headers: new Headers(
-            Object.entries(response.headers).map(([key, value]) => [key, String(value)])
-          )
-        });
-      })
-    );
-
-    const firstControlPlane = createControlPlaneApp({
-      logger: false,
-      service: createOrchestratorService({
-        acpClient: createHttpACPClient({ baseUrl: gatewayBaseUrl }),
-        store: createTaskReadModel({ eventStore })
-      })
-    });
-
-    await firstControlPlane.ready();
-
+  try {
     const created = await firstControlPlane.inject({
       method: "POST",
       url: "/api/tasks",
@@ -179,18 +187,28 @@ describe("phase 2 smoke flow", () => {
         sensitivity: "medium"
       }
     });
+    const approved = await firstControlPlane.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/approve`
+    });
 
     await pool.query("delete from tasks_current");
+    await pool.query("delete from task_history_entries");
+    await pool.query("delete from artifacts_current");
     await pool.query("delete from runs_current");
     await pool.query("delete from projection_checkpoint");
-    await Promise.all([firstControlPlane.close(), firstGateway.close()]);
 
-    const restartedGateway = createGatewayApp({
+    await Promise.all([firstControlPlane.close(), firstGateway.close()]);
+    firstControlPlane = undefined;
+    firstGateway = undefined as never;
+
+    restartedGateway = createGatewayApp({
       logger: false,
       codexRunner,
       store: createRunReadModel({ eventStore })
     });
-    const restartedControlPlane = createControlPlaneApp({
+    activeGateway = restartedGateway;
+    restartedControlPlane = createControlPlaneApp({
       logger: false,
       service: createOrchestratorService({
         acpClient: createHttpACPClient({ baseUrl: gatewayBaseUrl }),
@@ -200,23 +218,54 @@ describe("phase 2 smoke flow", () => {
 
     await Promise.all([restartedGateway.ready(), restartedControlPlane.ready()]);
 
-    try {
-      const replay = await restartedControlPlane.inject({
-        method: "GET",
-        url: `/api/tasks/${created.json().id}/replay?asOfEventId=${created.json().latestEventId}`
-      });
-      const run = await restartedGateway.inject({
-        method: "GET",
-        url: `/runs/${created.json().approvalRunId}`
-      });
+    const runs = await restartedControlPlane.inject({
+      method: "GET",
+      url: `/api/tasks/${created.json().id}/runs`
+    });
+    const artifacts = await restartedControlPlane.inject({
+      method: "GET",
+      url: `/api/tasks/${created.json().id}/artifacts`
+    });
 
-      expect(replay.statusCode).toBe(200);
-      expect(replay.json().task.status).toBe("awaiting_approval");
-      expect(run.statusCode).toBe(200);
-      expect(run.json().status).toBe("awaiting");
-    } finally {
-      await Promise.all([restartedControlPlane.close(), restartedGateway.close()]);
-      vi.unstubAllGlobals();
-    }
+    return {
+      created: created.json(),
+      approved: approved.json(),
+      runs: runs.json(),
+      artifacts: artifacts.json()
+    };
+  } finally {
+    await Promise.all([
+      restartedControlPlane?.close(),
+      restartedGateway?.close(),
+      firstControlPlane?.close(),
+      firstGateway?.close(),
+      pool.end()
+    ]);
+    vi.unstubAllGlobals();
+  }
+}
+
+describe("phase 2 smoke flow", () => {
+  it("creates, approves, executes, and verifies through the gateway", async () => {
+    const result = await runSmokeScenario();
+
+    expect(result.created.status).toBe("awaiting_approval");
+    expect(result.approved.status).toBe("completed");
+    expect(result.approved.artifacts.map((artifact: { name: string }) => artifact.name)).toContain(
+      "execution-report.json"
+    );
   });
+
+  it("rebuilds task-linked runs and artifact projections after approval and restart", async () => {
+    const result = await runPersistedApprovalRestartScenario();
+
+    expect(result.created.status).toBe("awaiting_approval");
+    expect(result.approved.status).toBe("completed");
+    expect(result.runs.map((run: { phase: string }) => run.phase)).toEqual(
+      expect.arrayContaining(["approval", "execution", "verification"])
+    );
+    expect(
+      result.artifacts.map((artifact: { name: string }) => artifact.name)
+    ).toContain("execution-report.json");
+  }, 15000);
 });

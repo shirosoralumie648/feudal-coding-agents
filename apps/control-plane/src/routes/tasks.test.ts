@@ -163,6 +163,14 @@ describe("control-plane routes", () => {
               return { rows: row ? [row] : [] };
             }
 
+            if (
+              sql.includes("task_history_entries") ||
+              sql.includes("artifacts_current") ||
+              sql.includes("from runs_current")
+            ) {
+              return { rows: [] };
+            }
+
             throw new Error(`Unexpected SQL: ${sql}`);
           }
         };
