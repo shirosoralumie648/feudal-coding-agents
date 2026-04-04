@@ -1,8 +1,8 @@
 import { TaskRecordSchema } from "@feudal/contracts";
 import { createPostgresEventStore, runMigrations } from "@feudal/persistence";
+import { newDb } from "pg-mem";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTaskReadModel } from "./task-read-model";
-import { newDb } from "../../../../packages/persistence/node_modules/pg-mem";
 
 function toIsoString(value: unknown) {
   if (typeof value === "string") {
