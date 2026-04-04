@@ -157,4 +157,108 @@ describe("task read model persistence projections", () => {
       artifacts: task.artifacts
     });
   });
+
+  it("records operator actions for approval and rejection events", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "completed",
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        runs: [],
+        runIds: [],
+        updatedAt: "2026-04-03T00:10:00.000Z"
+      },
+      "task.approved",
+      0
+    );
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "rejected",
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        updatedAt: "2026-04-03T00:12:00.000Z"
+      },
+      "task.rejected",
+      2
+    );
+
+    const actionRows = (
+      await pool.query(
+        `select action_type, status
+           from operator_actions
+          where task_id = $1
+          order by id asc`,
+        [task.id]
+      )
+    ).rows;
+
+    expect(actionRows).toEqual([
+      { action_type: "approve", status: "applied" },
+      { action_type: "reject", status: "applied" }
+    ]);
+  });
+
+  it("lists task runs from runs_current and marks rebuilt in-flight tasks as recovery_required", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "executing",
+        runs: [],
+        runIds: [],
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        updatedAt: "2026-04-03T00:20:00.000Z"
+      },
+      "task.executing",
+      0
+    );
+
+    await pool.query(
+      `insert into runs_current (
+         id, task_id, agent, status, phase, recovery_state, recovery_reason,
+         last_recovered_at, latest_event_id, latest_projection_version, payload_json, updated_at
+       ) values (
+         'run-execution',
+         'task-1',
+         'gongbu-executor',
+         'completed',
+         'execution',
+         'healthy',
+         null,
+         '2026-04-03T00:20:00.000Z',
+         4,
+         4,
+         '{"id":"run-execution","taskId":"task-1","agent":"gongbu-executor","status":"completed","phase":"execution","messages":[],"artifacts":[]}'::jsonb,
+         '2026-04-03T00:20:00.000Z'
+       )`
+    );
+
+    await expect(readModel.listTaskRuns(task.id)).resolves.toEqual([
+      {
+        id: "run-execution",
+        agent: "gongbu-executor",
+        status: "completed",
+        phase: "execution"
+      }
+    ]);
+
+    await pool.query("delete from tasks_current");
+    await pool.query("delete from task_history_entries");
+    await pool.query("delete from artifacts_current");
+    await pool.query("delete from projection_checkpoint");
+
+    await readModel.rebuildProjectionsIfNeeded();
+
+    await expect(readModel.getRecoverySummary()).resolves.toEqual({
+      tasksNeedingRecovery: 1,
+      runsNeedingRecovery: 0
+    });
+  });
 });

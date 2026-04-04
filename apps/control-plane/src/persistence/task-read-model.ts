@@ -54,6 +54,13 @@ function toProjectionRecord(row: {
   } satisfies TaskProjectionRecord;
 }
 
+type ProjectionQueryable = {
+  query: (
+    sql: string,
+    values: unknown[]
+  ) => Promise<{ rows: Record<string, unknown>[] }>;
+};
+
 async function replaceTaskHistoryEntries(options: {
   queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
   task: TaskRecord;
@@ -121,6 +128,132 @@ async function replaceTaskArtifacts(options: {
   }
 }
 
+async function appendOperatorAction(options: {
+  queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
+  task: TaskRecord;
+  eventType: string;
+}) {
+  const actionType =
+    options.eventType === "task.approved"
+      ? "approve"
+      : options.eventType === "task.rejected"
+        ? "reject"
+        : undefined;
+
+  if (!actionType) {
+    return;
+  }
+
+  await options.queryable.query(
+    `insert into operator_actions (
+       task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [options.task.id, actionType, "applied", null, "user", null, {}, options.task.updatedAt]
+  );
+}
+
+async function loadTaskHistory(queryable: ProjectionQueryable, taskId: string) {
+  const result = await queryable.query(
+    `select status, at, note
+       from task_history_entries
+      where task_id = $1
+      order by ordinal asc`,
+    [taskId]
+  );
+
+  return result.rows.map((row) => ({
+    status: String(row.status) as TaskRecord["history"][number]["status"],
+    at: toIsoString(row.at),
+    note: String(row.note)
+  }));
+}
+
+async function loadTaskArtifacts(queryable: ProjectionQueryable, taskId: string) {
+  const result = await queryable.query(
+    `select id, kind, name, mime_type, payload_json
+       from artifacts_current
+      where task_id = $1
+      order by id asc`,
+    [taskId]
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    kind: String(row.kind) as TaskArtifact["kind"],
+    name: String(row.name),
+    mimeType: String(row.mime_type),
+    content: row.payload_json
+  }));
+}
+
+async function loadTaskRuns(queryable: ProjectionQueryable, taskId: string) {
+  const result = await queryable.query(
+    `select payload_json
+       from runs_current
+      where task_id = $1
+      order by updated_at asc`,
+    [taskId]
+  );
+
+  return result.rows.map((row) => {
+    const payload = row.payload_json as Record<string, unknown>;
+
+    return {
+      id: String(payload.id),
+      agent: String(payload.agent),
+      status: String(payload.status) as ACPRunSummary["status"],
+      phase: String(payload.phase) as ACPRunSummary["phase"],
+      awaitPrompt:
+        typeof payload.awaitPrompt === "string" ? payload.awaitPrompt : undefined,
+      allowedActions: Array.isArray(payload.allowedActions)
+        ? payload.allowedActions.filter(
+            (action): action is string => typeof action === "string"
+          )
+        : undefined
+    } satisfies ACPRunSummary;
+  });
+}
+
+async function hydrateTaskProjection(
+  queryable: ProjectionQueryable,
+  task: TaskProjectionRecord
+) {
+  const [history, artifacts, runs] = await Promise.all([
+    loadTaskHistory(queryable, task.id),
+    loadTaskArtifacts(queryable, task.id),
+    loadTaskRuns(queryable, task.id)
+  ]);
+
+  return {
+    ...task,
+    history,
+    artifacts,
+    runs,
+    runIds: runs.map((run) => run.id)
+  } satisfies TaskProjectionRecord;
+}
+
+function toRecoveredTaskState(status: TaskRecord["status"]) {
+  if (
+    status === "awaiting_approval" ||
+    status === "completed" ||
+    status === "partial_success" ||
+    status === "rejected" ||
+    status === "failed" ||
+    status === "rolled_back"
+  ) {
+    return {
+      recoveryState: "healthy" as const,
+      recoveryReason: undefined
+    };
+  }
+
+  return {
+    recoveryState: "recovery_required" as const,
+    recoveryReason: `Recovered ${status} task requires operator review`
+  };
+}
+
 async function upsertTaskProjection(options: {
   queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
   task: TaskRecord;
@@ -182,18 +315,18 @@ export function createTaskReadModel(options: {
     },
 
     async getTask(taskId: string) {
-      const result = await options.eventStore.withTransaction(async (tx) =>
-        tx.query(
+      return options.eventStore.withTransaction(async (tx) => {
+        const result = await tx.query(
           `select recovery_state, recovery_reason, last_recovered_at,
                   latest_event_id, latest_projection_version, payload_json
              from tasks_current
             where id = $1`,
           [taskId]
-        )
-      );
+        );
+        const row = result.rows[0];
 
-      const row = result.rows[0];
-      return row ? toProjectionRecord(row) : undefined;
+        return row ? hydrateTaskProjection(tx as ProjectionQueryable, toProjectionRecord(row)) : undefined;
+      });
     },
 
     async saveTask(task: TaskRecord, eventType: string, expectedVersion: number) {
@@ -236,6 +369,11 @@ export function createTaskReadModel(options: {
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
         });
+        await appendOperatorAction({
+          queryable: tx,
+          task,
+          eventType
+        });
         await options.eventStore.writeCheckpoint("tasks_current", latestEvent?.id ?? 0, tx);
 
         return toTaskProjectionRecord({
@@ -263,11 +401,27 @@ export function createTaskReadModel(options: {
     },
 
     async listTaskRuns(taskId: string) {
-      return (await this.getTask(taskId))?.runs;
+      return options.eventStore.withTransaction(async (tx) => {
+        const result = await tx.query(`select id from tasks_current where id = $1`, [taskId]);
+
+        if (!result.rows[0]) {
+          return undefined;
+        }
+
+        return loadTaskRuns(tx as ProjectionQueryable, taskId);
+      });
     },
 
     async listTaskArtifacts(taskId: string) {
-      return (await this.getTask(taskId))?.artifacts;
+      return options.eventStore.withTransaction(async (tx) => {
+        const result = await tx.query(`select id from tasks_current where id = $1`, [taskId]);
+
+        if (!result.rows[0]) {
+          return undefined;
+        }
+
+        return loadTaskArtifacts(tx as ProjectionQueryable, taskId);
+      });
     },
 
     async replayTaskAtEventId(taskId: string, eventId: number) {
@@ -376,10 +530,13 @@ export function createTaskReadModel(options: {
             continue;
           }
 
+          const recovered = toRecoveredTaskState(task.status);
+
           await upsertTaskProjection({
             queryable: tx,
             task,
-            recoveryState: "healthy",
+            recoveryState: recovered.recoveryState,
+            recoveryReason: recovered.recoveryReason,
             lastRecoveredAt: task.updatedAt,
             latestEventId: latestStreamPosition.eventId,
             latestProjectionVersion: latestStreamPosition.eventVersion
