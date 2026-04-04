@@ -5,6 +5,8 @@ export type TaskEvent =
   | { type: "intake.completed" }
   | { type: "planning.completed" }
   | { type: "review.approved" }
+  | { type: "review.approved_without_approval" }
+  | { type: "review.rejected" }
   | { type: "review.revision_requested" }
   | { type: "revision.submitted" }
   | { type: "approval.granted" }
@@ -22,6 +24,8 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
   planning: { "planning.completed": "review" },
   review: {
     "review.approved": "awaiting_approval",
+    "review.approved_without_approval": "dispatching",
+    "review.rejected": "rejected",
     "review.revision_requested": "needs_revision"
   },
   needs_revision: { "revision.submitted": "planning" },

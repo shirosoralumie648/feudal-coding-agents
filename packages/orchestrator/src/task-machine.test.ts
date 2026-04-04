@@ -10,6 +10,18 @@ const baseTask: TaskRecord = {
   artifacts: [],
   history: [],
   runIds: [],
+  runs: [],
+  governance: {
+    requestedRequiresApproval: true,
+    effectiveRequiresApproval: true,
+    allowMock: false,
+    sensitivity: "medium",
+    executionMode: "real",
+    policyReasons: [],
+    reviewVerdict: "approve",
+    allowedActions: [],
+    revisionCount: 0
+  },
   createdAt: "2026-04-02T00:00:00.000Z",
   updatedAt: "2026-04-02T00:00:00.000Z"
 };
@@ -21,6 +33,20 @@ describe("transitionTask", () => {
 
     expect(submitted.status).toBe("intake");
     expect(planned.status).toBe("planning");
+  });
+
+  it("routes review outcomes into revision, rejection, and direct dispatch", () => {
+    const reviewTask = { ...baseTask, status: "review" as const };
+
+    expect(
+      transitionTask(reviewTask, { type: "review.revision_requested" }).status
+    ).toBe("needs_revision");
+    expect(transitionTask(reviewTask, { type: "review.rejected" }).status).toBe(
+      "rejected"
+    );
+    expect(
+      transitionTask(reviewTask, { type: "review.approved_without_approval" }).status
+    ).toBe("dispatching");
   });
 
   it("rejects illegal transitions", () => {

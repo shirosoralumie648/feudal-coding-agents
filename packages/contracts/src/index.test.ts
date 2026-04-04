@@ -25,37 +25,41 @@ describe("contracts", () => {
     expect(TaskStatusSchema.options).toContain("awaiting_approval");
   });
 
-  it("accepts ACP run summaries and approval request metadata on a task record", () => {
+  it("accepts governance and revision metadata on a task record", () => {
     const result = TaskRecordSchema.parse({
       id: "task-1",
       title: "Build overview page",
       prompt: "Create the dashboard",
-      status: "review",
+      status: "needs_revision",
       artifacts: [],
       history: [],
       runIds: ["run-1"],
-      approvalRunId: "run-1",
-      runs: [
-        {
-          id: "run-1",
-          agent: "auditor-agent",
-          status: "awaiting",
-          phase: "review",
-          awaitPrompt: "Approve the plan?",
-          allowedActions: ["approve", "reject"]
-        }
-      ],
-      approvalRequest: {
-        runId: "run-1",
-        prompt: "Approve the plan?",
-        actions: ["approve", "reject"]
+      approvalRunId: undefined,
+      runs: [],
+      governance: {
+        requestedRequiresApproval: false,
+        effectiveRequiresApproval: true,
+        allowMock: true,
+        sensitivity: "high",
+        executionMode: "real_with_mock_fallback",
+        policyReasons: ["high sensitivity forced approval"],
+        reviewVerdict: "needs_revision",
+        allowedActions: ["revise"],
+        revisionCount: 1
       },
-      createdAt: "2026-04-03T00:00:00.000Z",
-      updatedAt: "2026-04-03T00:00:00.000Z"
+      revisionRequest: {
+        note: "Clarify rollback expectations.",
+        reviewerReasons: ["critic-agent requested tighter rollback language"],
+        createdAt: "2026-04-04T00:00:00.000Z"
+      },
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:05:00.000Z"
     });
 
-    expect(result.runs[0]?.phase).toBe("review");
-    expect(result.approvalRequest?.runId).toBe("run-1");
+    expect(result.governance.allowedActions).toEqual(["revise"]);
+    expect(result.revisionRequest?.reviewerReasons).toContain(
+      "critic-agent requested tighter rollback language"
+    );
   });
 
   it("accepts audit event and recovery state metadata", () => {

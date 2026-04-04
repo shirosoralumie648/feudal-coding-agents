@@ -17,6 +17,38 @@ export const TaskStatusSchema = z.enum([
   "rolled_back"
 ]);
 
+export const TaskActionSchema = z.enum(["approve", "reject", "revise"]);
+
+export const ReviewVerdictSchema = z.enum([
+  "approve",
+  "needs_revision",
+  "reject"
+]);
+
+export const GovernanceExecutionModeSchema = z.enum([
+  "real",
+  "real_with_mock_fallback",
+  "mock_fallback_used"
+]);
+
+export const TaskGovernanceSchema = z.object({
+  requestedRequiresApproval: z.boolean(),
+  effectiveRequiresApproval: z.boolean(),
+  allowMock: z.boolean(),
+  sensitivity: z.enum(["low", "medium", "high"]),
+  executionMode: GovernanceExecutionModeSchema,
+  policyReasons: z.array(z.string()).default([]),
+  reviewVerdict: ReviewVerdictSchema,
+  allowedActions: z.array(TaskActionSchema).default([]),
+  revisionCount: z.number().int().nonnegative().default(0)
+});
+
+export const TaskRevisionRequestSchema = z.object({
+  note: z.string().min(1),
+  reviewerReasons: z.array(z.string()).default([]),
+  createdAt: z.string()
+});
+
 export const TaskArtifactSchema = z.object({
   id: z.string(),
   kind: z.enum([
@@ -108,11 +140,18 @@ export const TaskRecordSchema = z.object({
   approvalRunId: z.string().optional(),
   runs: z.array(ACPRunSummarySchema).default([]),
   approvalRequest: TaskApprovalRequestSchema.optional(),
+  governance: TaskGovernanceSchema,
+  revisionRequest: TaskRevisionRequestSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string()
 });
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+export type TaskAction = z.infer<typeof TaskActionSchema>;
+export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
+export type GovernanceExecutionMode = z.infer<typeof GovernanceExecutionModeSchema>;
+export type TaskGovernance = z.infer<typeof TaskGovernanceSchema>;
+export type TaskRevisionRequest = z.infer<typeof TaskRevisionRequestSchema>;
 export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 export type TaskArtifact = z.infer<typeof TaskArtifactSchema>;
 export type ACPRunSummaryStatus = z.infer<typeof ACPRunSummaryStatusSchema>;
