@@ -85,6 +85,7 @@ export function createOrchestratorService(options: {
 
   return {
     async createTask(spec: TaskSpec): Promise<TaskProjectionRecord> {
+      const runMetadata = { taskId: spec.id };
       let task = transitionTask(newTask(spec), { type: "task.submitted" });
       let latestProjectionVersion = 0;
       const persistTask = async (taskSnapshot: TaskRecord, eventType: string) => {
@@ -101,7 +102,8 @@ export function createOrchestratorService(options: {
 
       const intakeRun = await acp.runAgent({
         agent: "intake-agent",
-        messages: [{ role: "user", content: spec.prompt }]
+        messages: [{ role: "user", content: spec.prompt }],
+        metadata: runMetadata
       });
       task = transitionTask(task, { type: "intake.completed" });
       await persistTask(task, "task.intake_completed");
@@ -113,7 +115,8 @@ export function createOrchestratorService(options: {
             role: "agent/intake-agent",
             content: JSON.stringify(intakeRun.artifacts[0]?.content)
           }
-        ]
+        ],
+        metadata: runMetadata
       });
       task = transitionTask(task, { type: "planning.completed" });
       await persistTask(task, "task.planning_completed");
@@ -126,7 +129,8 @@ export function createOrchestratorService(options: {
               role: "agent/analyst-agent",
               content: JSON.stringify(analystRun.artifacts[0]?.content)
             }
-          ]
+          ],
+          metadata: runMetadata
         }),
         acp.runAgent({
           agent: "critic-agent",
@@ -135,7 +139,8 @@ export function createOrchestratorService(options: {
               role: "agent/analyst-agent",
               content: JSON.stringify(analystRun.artifacts[0]?.content)
             }
-          ]
+          ],
+          metadata: runMetadata
         })
       ]);
 
@@ -145,7 +150,8 @@ export function createOrchestratorService(options: {
       const approvalRun = await acp.awaitExternalInput({
         label: "approval-gate",
         prompt: "Approve the decision brief?",
-        actions: ["approve", "reject"]
+        actions: ["approve", "reject"],
+        metadata: runMetadata
       });
 
       task = {
@@ -194,6 +200,7 @@ export function createOrchestratorService(options: {
     },
 
     async approveTask(taskId: string): Promise<TaskProjectionRecord> {
+      const executionMetadata = { taskId };
       const current = await store.getTask(taskId);
 
       if (!current || !current.approvalRunId) {
@@ -228,7 +235,8 @@ export function createOrchestratorService(options: {
 
       const executorInput = {
         agent: "gongbu-executor",
-        messages: [{ role: "user", content: current.prompt }] as ACPRun["messages"]
+        messages: [{ role: "user", content: current.prompt }] as ACPRun["messages"],
+        metadata: executionMetadata
       };
 
       let executorRun: ACPRun;
@@ -257,7 +265,8 @@ export function createOrchestratorService(options: {
             role: "agent/gongbu-executor",
             content: JSON.stringify(executorRun.artifacts[0]?.content)
           }
-        ]
+        ],
+        metadata: executionMetadata
       });
 
       const verifierArtifact = (verifierRun.artifacts[0]?.content ?? {}) as {

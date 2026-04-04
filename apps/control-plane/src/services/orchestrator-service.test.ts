@@ -36,6 +36,47 @@ function createRecordingACPClient(events: string[]): ACPClient {
 }
 
 describe("orchestrator service durability", () => {
+  it("passes taskId metadata into every ACP run created for a task", async () => {
+    const metadataLog: string[] = [];
+    const base = createMockACPClient();
+    const acpClient: ACPClient = {
+      ...base,
+      async runAgent(input: ACPRunAgentInput) {
+        metadataLog.push(`${input.agent}:${input.metadata?.taskId as string | undefined}`);
+        return base.runAgent(input);
+      },
+      async awaitExternalInput(input: ACPAwaitExternalInput) {
+        const inputWithMetadata = input as ACPAwaitExternalInput & {
+          metadata?: { taskId?: string };
+        };
+        metadataLog.push(`${input.label}:${inputWithMetadata.metadata?.taskId}`);
+        return base.awaitExternalInput(input);
+      }
+    };
+
+    const service = createOrchestratorService({ acpClient });
+    const created = await service.createTask({
+      id: "task-metadata",
+      title: "Metadata task",
+      prompt: "Thread metadata through all runs",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    await service.approveTask(created.id);
+
+    expect(metadataLog).toEqual([
+      "intake-agent:task-metadata",
+      "analyst-agent:task-metadata",
+      "auditor-agent:task-metadata",
+      "critic-agent:task-metadata",
+      "approval-gate:task-metadata",
+      "gongbu-executor:task-metadata",
+      "xingbu-verifier:task-metadata"
+    ]);
+  });
+
   it("persists task state before opening the approval gate", async () => {
     const events: string[] = [];
     const service = createOrchestratorService({

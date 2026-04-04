@@ -85,7 +85,7 @@ describe("HTTP ACP client", () => {
     );
   });
 
-  it("awaitExternalInput() posts kind=await payload to /runs", async () => {
+  it("awaitExternalInput() forwards metadata for task-linked approval runs", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -103,9 +103,10 @@ describe("HTTP ACP client", () => {
 
     const client = createHttpACPClient({ baseUrl: "https://acp.example.com" });
     await client.awaitExternalInput({
-      label: "approval",
+      label: "approval-gate",
       prompt: "Approve?",
-      actions: ["approve", "reject"]
+      actions: ["approve", "reject"],
+      metadata: { taskId: "task-1" }
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -114,9 +115,10 @@ describe("HTTP ACP client", () => {
         method: "POST",
         body: JSON.stringify({
           kind: "await",
-          label: "approval",
+          label: "approval-gate",
           prompt: "Approve?",
-          actions: ["approve", "reject"]
+          actions: ["approve", "reject"],
+          metadata: { taskId: "task-1" }
         })
       })
     );

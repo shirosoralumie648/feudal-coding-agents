@@ -57,6 +57,7 @@ export interface ACPAwaitExternalInput {
   label: string;
   prompt: string;
   actions: string[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface ACPClient {
