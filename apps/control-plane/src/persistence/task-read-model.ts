@@ -54,6 +54,73 @@ function toProjectionRecord(row: {
   } satisfies TaskProjectionRecord;
 }
 
+async function replaceTaskHistoryEntries(options: {
+  queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
+  task: TaskRecord;
+}) {
+  await options.queryable.query(`delete from task_history_entries where task_id = $1`, [
+    options.task.id
+  ]);
+
+  for (const [ordinal, entry] of options.task.history.entries()) {
+    await options.queryable.query(
+      `insert into task_history_entries (task_id, ordinal, status, at, note)
+       values ($1,$2,$3,$4,$5)`,
+      [options.task.id, ordinal, entry.status, entry.at, entry.note]
+    );
+  }
+}
+
+async function replaceTaskArtifacts(options: {
+  queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
+  task: TaskRecord;
+  latestEventId: number;
+  latestProjectionVersion: number;
+}) {
+  const artifactIds = options.task.artifacts.map((artifact) => artifact.id);
+
+  if (artifactIds.length === 0) {
+    await options.queryable.query(`delete from artifacts_current where task_id = $1`, [
+      options.task.id
+    ]);
+    return;
+  }
+
+  await options.queryable.query(
+    `delete from artifacts_current
+      where task_id = $1
+        and not (id = any($2::text[]))`,
+    [options.task.id, artifactIds]
+  );
+
+  for (const artifact of options.task.artifacts) {
+    await options.queryable.query(
+      `insert into artifacts_current (
+         id, task_id, kind, name, mime_type, payload_json,
+         latest_event_id, latest_projection_version
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8)
+       on conflict (id) do update set
+         task_id = excluded.task_id,
+         kind = excluded.kind,
+         name = excluded.name,
+         mime_type = excluded.mime_type,
+         payload_json = excluded.payload_json,
+         latest_event_id = excluded.latest_event_id,
+         latest_projection_version = excluded.latest_projection_version`,
+      [
+        artifact.id,
+        options.task.id,
+        artifact.kind,
+        artifact.name,
+        artifact.mimeType,
+        artifact.content,
+        options.latestEventId,
+        options.latestProjectionVersion
+      ]
+    );
+  }
+}
+
 async function upsertTaskProjection(options: {
   queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
   task: TaskRecord;
@@ -156,6 +223,16 @@ export function createTaskReadModel(options: {
           task,
           recoveryState: "healthy",
           lastRecoveredAt: new Date().toISOString(),
+          latestEventId: latestEvent?.id ?? 0,
+          latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
+        });
+        await replaceTaskHistoryEntries({
+          queryable: tx,
+          task
+        });
+        await replaceTaskArtifacts({
+          queryable: tx,
+          task,
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
         });
@@ -304,6 +381,16 @@ export function createTaskReadModel(options: {
             task,
             recoveryState: "healthy",
             lastRecoveredAt: task.updatedAt,
+            latestEventId: latestStreamPosition.eventId,
+            latestProjectionVersion: latestStreamPosition.eventVersion
+          });
+          await replaceTaskHistoryEntries({
+            queryable: tx,
+            task
+          });
+          await replaceTaskArtifacts({
+            queryable: tx,
+            task,
             latestEventId: latestStreamPosition.eventId,
             latestProjectionVersion: latestStreamPosition.eventVersion
           });
