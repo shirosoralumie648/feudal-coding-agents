@@ -1,5 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
+import {
+  controlPlaneServerCommand,
+  webServerCommand
+} from "./playwright-webserver";
 
 const controlPlaneRoot = fileURLToPath(new URL("../control-plane", import.meta.url));
 const webRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -15,7 +19,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "pnpm exec node --import tsx src/server.ts",
+      command: controlPlaneServerCommand,
       cwd: controlPlaneRoot,
       env: {
         FEUDAL_ACP_MODE: "mock",
@@ -25,7 +29,7 @@ export default defineConfig({
       reuseExistingServer: true
     },
     {
-      command: "pnpm build && pnpm exec vite preview --host 127.0.0.1 --port 4173",
+      command: webServerCommand,
       cwd: webRoot,
       url: "http://127.0.0.1:4173",
       reuseExistingServer: true
