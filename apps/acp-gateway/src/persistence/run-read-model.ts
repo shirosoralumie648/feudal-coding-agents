@@ -22,6 +22,7 @@ function toRunRecord(payload: unknown): GatewayRunRecord {
 
   return {
     id: run.id,
+    ...(typeof run.taskId === "string" ? { taskId: run.taskId } : {}),
     agent: run.agent,
     status: run.status,
     phase: run.phase,
@@ -62,6 +63,7 @@ async function upsertRunProjection(options: {
        payload_json, updated_at
      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      on conflict (id) do update set
+       task_id = excluded.task_id,
        agent = excluded.agent,
        status = excluded.status,
        phase = excluded.phase,
@@ -74,7 +76,7 @@ async function upsertRunProjection(options: {
        updated_at = excluded.updated_at`,
     [
       options.run.id,
-      null,
+      options.run.taskId ?? null,
       options.run.agent,
       options.run.status,
       options.run.phase ?? null,

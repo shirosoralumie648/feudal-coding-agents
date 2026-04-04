@@ -81,4 +81,43 @@ describe("run read model", () => {
 
     expect(run?.awaitPrompt).toBe("");
   });
+
+  it("writes task_id into runs_current and restores it on rebuild", async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    await runMigrations(pool);
+    const eventStore = createPostgresEventStore({ pool });
+    const readModel = createRunReadModel({ eventStore });
+
+    await readModel.saveRun(
+      {
+        id: "run-task-linked",
+        taskId: "task-1",
+        agent: "analyst-agent",
+        status: "completed",
+        phase: "planning",
+        messages: [],
+        artifacts: []
+      },
+      "run.completed",
+      0
+    );
+
+    const beforeRebuild = await pool.query(
+      "select task_id from runs_current where id = $1",
+      ["run-task-linked"]
+    );
+    expect(beforeRebuild.rows[0]?.task_id).toBe("task-1");
+
+    await pool.query("delete from runs_current");
+    await pool.query(
+      "delete from projection_checkpoint where projection_name = 'runs_current'"
+    );
+
+    await readModel.rebuild();
+    const run = await readModel.getRun("run-task-linked");
+
+    expect(run?.taskId).toBe("task-1");
+  });
 });

@@ -15,17 +15,25 @@ const MessageSchema = z.object({
   content: z.string()
 });
 
+const RunMetadataSchema = z
+  .object({
+    taskId: z.string().optional()
+  })
+  .strict();
+
 const RunCreateSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("await"),
     label: z.string(),
     prompt: z.string(),
-    actions: z.array(z.string()).min(1)
+    actions: z.array(z.string()).min(1),
+    metadata: RunMetadataSchema.optional()
   }),
   z.object({
     kind: z.literal("agent-run"),
     agent: z.enum(gatewayWorkerNames),
-    messages: z.array(MessageSchema)
+    messages: z.array(MessageSchema),
+    metadata: RunMetadataSchema.optional()
   })
 ]);
 
@@ -65,6 +73,7 @@ export function registerRunRoutes(
       const run = await store.saveRun(
         {
           id: randomUUID(),
+          taskId: payload.metadata?.taskId,
           agent: payload.label,
           status: "awaiting",
           messages: [],
@@ -91,6 +100,7 @@ export function registerRunRoutes(
       const failedRun = await store.saveRun(
         {
           id: randomUUID(),
+          taskId: payload.metadata?.taskId,
           agent: payload.agent,
           status: "failed",
           messages: payload.messages,
@@ -103,7 +113,14 @@ export function registerRunRoutes(
       return reply.code(201).send(failedRun);
     }
 
-    const persisted = await store.saveRun(run, `run.${run.status}`, 0);
+    const persisted = await store.saveRun(
+      {
+        ...run,
+        taskId: run.taskId ?? payload.metadata?.taskId
+      },
+      `run.${run.status}`,
+      0
+    );
     return reply.code(201).send(persisted);
   });
 

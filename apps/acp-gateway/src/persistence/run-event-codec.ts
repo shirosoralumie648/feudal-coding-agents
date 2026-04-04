@@ -40,6 +40,7 @@ function toRecoveryReason(
 function toRunSnapshot(run: GatewayRunRecord) {
   return {
     id: run.id,
+    ...(run.taskId !== undefined ? { taskId: run.taskId } : {}),
     agent: run.agent,
     status: run.status,
     phase: run.phase,

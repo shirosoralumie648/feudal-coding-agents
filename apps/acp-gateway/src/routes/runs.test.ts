@@ -382,4 +382,26 @@ describe("acp-gateway runs routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().message).toBe("Invalid await response payload");
   });
+
+  it("persists taskId from await metadata", async () => {
+    const app = Fastify();
+    registerRunRoutes(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "await",
+        label: "approval-gate",
+        prompt: "Proceed?",
+        actions: ["approve", "reject"],
+        metadata: {
+          taskId: "task-1"
+        }
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().taskId).toBe("task-1");
+  });
 });

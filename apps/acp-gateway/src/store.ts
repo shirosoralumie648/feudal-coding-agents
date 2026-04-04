@@ -14,6 +14,7 @@ export type GatewayRecoveryState = "healthy" | "replaying" | "recovery_required"
 
 export interface GatewayRunRecord {
   id: string;
+  taskId?: string;
   agent: string;
   status: ACPRunStatus;
   phase?: string;
