@@ -197,12 +197,13 @@ async function loadTaskRuns(queryable: ProjectionQueryable, taskId: string) {
 
   return result.rows.map((row) => {
     const payload = row.payload_json as Record<string, unknown>;
+    const agent = String(payload.agent);
 
     return {
       id: String(payload.id),
-      agent: String(payload.agent),
+      agent,
       status: String(payload.status) as ACPRunSummary["status"],
-      phase: String(payload.phase) as ACPRunSummary["phase"],
+      phase: toRunPhase(agent, payload.phase),
       awaitPrompt:
         typeof payload.awaitPrompt === "string" ? payload.awaitPrompt : undefined,
       allowedActions: Array.isArray(payload.allowedActions)
@@ -231,6 +232,34 @@ async function hydrateTaskProjection(
     runs,
     runIds: runs.map((run) => run.id)
   } satisfies TaskProjectionRecord;
+}
+
+function toRunPhase(agent: string, phase: unknown): ACPRunSummary["phase"] {
+  if (typeof phase === "string") {
+    return phase as ACPRunSummary["phase"];
+  }
+
+  if (agent === "intake-agent") {
+    return "intake";
+  }
+
+  if (agent === "analyst-agent") {
+    return "planning";
+  }
+
+  if (agent === "auditor-agent" || agent === "critic-agent") {
+    return "review";
+  }
+
+  if (agent === "approval-gate") {
+    return "approval";
+  }
+
+  if (agent === "gongbu-executor") {
+    return "execution";
+  }
+
+  return "verification";
 }
 
 function toRecoveredTaskState(status: TaskRecord["status"]) {

@@ -261,4 +261,51 @@ describe("task read model persistence projections", () => {
       runsNeedingRecovery: 0
     });
   });
+
+  it("infers approval phase when persisted task-linked runs omit phase", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(task, "task.awaiting_approval", 0);
+
+    await pool.query(
+      `insert into runs_current (
+         id, task_id, agent, status, phase, recovery_state, recovery_reason,
+         last_recovered_at, latest_event_id, latest_projection_version, payload_json, updated_at
+       ) values (
+         'run-approval',
+         'task-1',
+         'approval-gate',
+         'awaiting',
+         null,
+         'healthy',
+         null,
+         '2026-04-03T00:05:00.000Z',
+         2,
+         2,
+         '{"id":"run-approval","taskId":"task-1","agent":"approval-gate","status":"awaiting","messages":[],"artifacts":[],"awaitPrompt":"Approve the decision brief?","allowedActions":["approve","reject"]}'::jsonb,
+         '2026-04-03T00:05:00.000Z'
+       )
+       on conflict (id) do update set
+         task_id = excluded.task_id,
+         agent = excluded.agent,
+         status = excluded.status,
+         phase = excluded.phase,
+         recovery_state = excluded.recovery_state,
+         recovery_reason = excluded.recovery_reason,
+         last_recovered_at = excluded.last_recovered_at,
+         latest_event_id = excluded.latest_event_id,
+         latest_projection_version = excluded.latest_projection_version,
+         payload_json = excluded.payload_json,
+         updated_at = excluded.updated_at`
+    );
+
+    await expect(readModel.listTaskRuns(task.id)).resolves.toContainEqual({
+      id: "run-approval",
+      agent: "approval-gate",
+      status: "awaiting",
+      phase: "approval",
+      awaitPrompt: "Approve the decision brief?",
+      allowedActions: ["approve", "reject"]
+    });
+  });
 });
