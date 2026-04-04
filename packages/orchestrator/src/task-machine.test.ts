@@ -37,6 +37,14 @@ describe("transitionTask", () => {
 
   it("routes review outcomes into revision, rejection, and direct dispatch", () => {
     const reviewTask = { ...baseTask, status: "review" as const };
+    const reviewTaskWithoutApproval = {
+      ...reviewTask,
+      governance: {
+        ...reviewTask.governance,
+        requestedRequiresApproval: false,
+        effectiveRequiresApproval: false
+      }
+    };
 
     expect(
       transitionTask(reviewTask, { type: "review.revision_requested" }).status
@@ -45,7 +53,9 @@ describe("transitionTask", () => {
       "rejected"
     );
     expect(
-      transitionTask(reviewTask, { type: "review.approved_without_approval" }).status
+      transitionTask(reviewTaskWithoutApproval, {
+        type: "review.approved_without_approval"
+      }).status
     ).toBe("dispatching");
   });
 

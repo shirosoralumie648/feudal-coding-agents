@@ -25,6 +25,67 @@ describe("contracts", () => {
     expect(TaskStatusSchema.options).toContain("awaiting_approval");
   });
 
+  it("accepts ACP run summaries and approval request metadata without governance", () => {
+    const result = TaskRecordSchema.parse({
+      id: "task-1",
+      title: "Build overview page",
+      prompt: "Create the dashboard",
+      status: "review",
+      artifacts: [],
+      history: [],
+      runIds: ["run-1"],
+      approvalRunId: "run-1",
+      runs: [
+        {
+          id: "run-1",
+          agent: "auditor-agent",
+          status: "awaiting",
+          phase: "review",
+          awaitPrompt: "Approve the plan?",
+          allowedActions: ["approve", "reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-1",
+        prompt: "Approve the plan?",
+        actions: ["approve", "reject"]
+      },
+      createdAt: "2026-04-03T00:00:00.000Z",
+      updatedAt: "2026-04-03T00:00:00.000Z"
+    });
+
+    expect(result.runs[0]?.phase).toBe("review");
+    expect(result.approvalRequest?.runId).toBe("run-1");
+    expect(result.governance).toBeUndefined();
+  });
+
+  it("accepts pending review verdict for pre-review governance state", () => {
+    const result = TaskRecordSchema.parse({
+      id: "task-2",
+      title: "Build task detail page",
+      prompt: "Create the task detail view",
+      status: "planning",
+      artifacts: [],
+      history: [],
+      runIds: [],
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "pending",
+        allowedActions: [],
+        revisionCount: 0
+      },
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:05:00.000Z"
+    });
+
+    expect(result.governance?.reviewVerdict).toBe("pending");
+  });
+
   it("accepts governance and revision metadata on a task record", () => {
     const result = TaskRecordSchema.parse({
       id: "task-1",

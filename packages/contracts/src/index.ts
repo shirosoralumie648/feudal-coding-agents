@@ -20,6 +20,7 @@ export const TaskStatusSchema = z.enum([
 export const TaskActionSchema = z.enum(["approve", "reject", "revise"]);
 
 export const ReviewVerdictSchema = z.enum([
+  "pending",
   "approve",
   "needs_revision",
   "reject"
@@ -140,7 +141,7 @@ export const TaskRecordSchema = z.object({
   approvalRunId: z.string().optional(),
   runs: z.array(ACPRunSummarySchema).default([]),
   approvalRequest: TaskApprovalRequestSchema.optional(),
-  governance: TaskGovernanceSchema,
+  governance: TaskGovernanceSchema.optional(),
   revisionRequest: TaskRevisionRequestSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string()
