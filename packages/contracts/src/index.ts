@@ -21,9 +21,9 @@ export const TaskActionSchema = z.enum(["approve", "reject", "revise"]);
 
 export const ReviewVerdictSchema = z.enum([
   "pending",
-  "approve",
+  "approved",
   "needs_revision",
-  "reject"
+  "rejected"
 ]);
 
 export const GovernanceExecutionModeSchema = z.enum([

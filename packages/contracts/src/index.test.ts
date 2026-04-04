@@ -86,6 +86,57 @@ describe("contracts", () => {
     expect(result.governance?.reviewVerdict).toBe("pending");
   });
 
+  it("accepts approved and rejected review verdict names", () => {
+    const approved = TaskRecordSchema.parse({
+      id: "task-3",
+      title: "Build approvals page",
+      prompt: "Create the approvals view",
+      status: "review",
+      artifacts: [],
+      history: [],
+      runIds: [],
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["approve", "reject"],
+        revisionCount: 0
+      },
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:05:00.000Z"
+    });
+
+    const rejected = TaskRecordSchema.parse({
+      id: "task-4",
+      title: "Build reject path",
+      prompt: "Create the rejection path",
+      status: "rejected",
+      artifacts: [],
+      history: [],
+      runIds: [],
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "high",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "rejected",
+        allowedActions: [],
+        revisionCount: 0
+      },
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:05:00.000Z"
+    });
+
+    expect(approved.governance?.reviewVerdict).toBe("approved");
+    expect(rejected.governance?.reviewVerdict).toBe("rejected");
+  });
+
   it("accepts governance and revision metadata on a task record", () => {
     const result = TaskRecordSchema.parse({
       id: "task-1",
@@ -95,7 +146,6 @@ describe("contracts", () => {
       artifacts: [],
       history: [],
       runIds: ["run-1"],
-      approvalRunId: undefined,
       runs: [],
       governance: {
         requestedRequiresApproval: false,
