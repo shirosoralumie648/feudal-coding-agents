@@ -16,37 +16,68 @@ export type TaskEvent =
   | { type: "execution.failed" }
   | { type: "verification.passed" }
   | { type: "verification.partial" }
-  | { type: "verification.failed" };
+  | { type: "verification.failed" }
+  | { type: "operator.recovered" }
+  | { type: "operator.takeover_submitted" }
+  | { type: "operator.abandoned" };
 
 const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStatus>>> = {
   draft: { "task.submitted": "intake" },
-  intake: { "intake.completed": "planning" },
-  planning: { "planning.completed": "review" },
+  intake: {
+    "intake.completed": "planning",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
+  },
+  planning: {
+    "planning.completed": "review",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
+  },
   review: {
     "review.approved": "awaiting_approval",
     "review.approved_without_approval": "dispatching",
     "review.rejected": "rejected",
-    "review.revision_requested": "needs_revision"
+    "review.revision_requested": "needs_revision",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
   },
-  needs_revision: { "revision.submitted": "planning" },
+  needs_revision: {
+    "revision.submitted": "planning",
+    "operator.abandoned": "abandoned"
+  },
   awaiting_approval: {
     "approval.granted": "dispatching",
-    "approval.rejected": "rejected"
+    "approval.rejected": "rejected",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
   },
-  dispatching: { "dispatch.completed": "executing" },
+  dispatching: {
+    "dispatch.completed": "executing",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
+  },
   executing: {
     "execution.completed": "verifying",
-    "execution.failed": "failed"
+    "execution.failed": "failed",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
   },
   verifying: {
     "verification.passed": "completed",
     "verification.partial": "partial_success",
-    "verification.failed": "failed"
+    "verification.failed": "failed",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
   },
   completed: {},
   partial_success: {},
+  abandoned: {},
   rejected: {},
-  failed: {},
+  failed: {
+    "operator.recovered": "dispatching",
+    "operator.takeover_submitted": "planning",
+    "operator.abandoned": "abandoned"
+  },
   rolled_back: {}
 };
 

@@ -62,4 +62,36 @@ describe("transitionTask", () => {
       transitionTask(baseTask, { type: "approval.granted" })
     ).toThrow("Illegal transition");
   });
+
+  it("routes failed task recovery back to dispatching", () => {
+    const failedTask = { ...baseTask, status: "failed" as const };
+
+    expect(transitionTask(failedTask, { type: "operator.recovered" }).status).toBe(
+      "dispatching"
+    );
+  });
+
+  it("routes takeover submissions from awaiting approval to planning", () => {
+    const awaitingTask = { ...baseTask, status: "awaiting_approval" as const };
+
+    expect(
+      transitionTask(awaitingTask, { type: "operator.takeover_submitted" }).status
+    ).toBe("planning");
+  });
+
+  it("routes takeover submissions from executing to planning", () => {
+    const executingTask = { ...baseTask, status: "executing" as const };
+
+    expect(
+      transitionTask(executingTask, { type: "operator.takeover_submitted" }).status
+    ).toBe("planning");
+  });
+
+  it("routes abandon requests from needs revision to abandoned", () => {
+    const needsRevisionTask = { ...baseTask, status: "needs_revision" as const };
+
+    expect(
+      transitionTask(needsRevisionTask, { type: "operator.abandoned" }).status
+    ).toBe("abandoned");
+  });
 });

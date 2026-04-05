@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AuditEventSchema,
+  OperatorActionRecordSchema,
+  OperatorActionSummarySchema,
   RecoveryStateSchema,
   TaskRecordSchema,
   TaskSpecSchema,
@@ -23,6 +25,10 @@ describe("contracts", () => {
 
   it("contains the ACP approval checkpoint state", () => {
     expect(TaskStatusSchema.options).toContain("awaiting_approval");
+  });
+
+  it("contains the operator abandoned state", () => {
+    expect(TaskStatusSchema.options).toContain("abandoned");
   });
 
   it("accepts ACP run summaries and approval request metadata without governance", () => {
@@ -171,6 +177,57 @@ describe("contracts", () => {
     expect(result.revisionRequest?.reviewerReasons).toContain(
       "critic-agent requested tighter rollback language"
     );
+  });
+
+  it("accepts operator allowed actions on a task record", () => {
+    const result = TaskRecordSchema.parse({
+      id: "task-5",
+      title: "Recover stuck task",
+      prompt: "Handle takeover",
+      status: "failed",
+      artifacts: [],
+      history: [],
+      runIds: [],
+      operatorAllowedActions: ["recover", "takeover", "abandon"],
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:05:00.000Z"
+    });
+
+    expect(result.operatorAllowedActions).toEqual([
+      "recover",
+      "takeover",
+      "abandon"
+    ]);
+  });
+
+  it("accepts operator action history records", () => {
+    const result = OperatorActionRecordSchema.parse({
+      id: "op-action-1",
+      taskId: "task-5",
+      actionType: "recover",
+      status: "applied",
+      requestedBy: "operator-1",
+      note: "Recovered from failed state",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:00:10.000Z"
+    });
+
+    expect(result.actionType).toBe("recover");
+    expect(result.status).toBe("applied");
+  });
+
+  it("accepts operator action summary payloads", () => {
+    const result = OperatorActionSummarySchema.parse({
+      taskId: "task-5",
+      lastActionAt: "2026-04-04T00:00:10.000Z",
+      counts: {
+        requested: 1,
+        applied: 2,
+        rejected: 0
+      }
+    });
+
+    expect(result.counts.applied).toBe(2);
   });
 
   it("accepts audit event and recovery state metadata", () => {

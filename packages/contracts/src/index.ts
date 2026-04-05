@@ -12,12 +12,19 @@ export const TaskStatusSchema = z.enum([
   "completed",
   "needs_revision",
   "partial_success",
+  "abandoned",
   "rejected",
   "failed",
   "rolled_back"
 ]);
 
 export const TaskActionSchema = z.enum(["approve", "reject", "revise"]);
+export const OperatorActionTypeSchema = z.enum(["recover", "takeover", "abandon"]);
+export const OperatorActionStatusSchema = z.enum([
+  "requested",
+  "applied",
+  "rejected"
+]);
 
 export const ReviewVerdictSchema = z.enum([
   "pending",
@@ -68,6 +75,27 @@ export const TaskHistoryEntrySchema = z.object({
   status: TaskStatusSchema,
   at: z.string(),
   note: z.string()
+});
+
+export const OperatorActionRecordSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  actionType: OperatorActionTypeSchema,
+  status: OperatorActionStatusSchema,
+  requestedBy: z.string(),
+  note: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const OperatorActionSummarySchema = z.object({
+  taskId: z.string(),
+  lastActionAt: z.string().optional(),
+  counts: z.object({
+    requested: z.number().int().nonnegative(),
+    applied: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative()
+  })
 });
 
 export const TaskSpecSchema = z.object({
@@ -142,6 +170,7 @@ export const TaskRecordSchema = z.object({
   runs: z.array(ACPRunSummarySchema).default([]),
   approvalRequest: TaskApprovalRequestSchema.optional(),
   governance: TaskGovernanceSchema.optional(),
+  operatorAllowedActions: z.array(OperatorActionTypeSchema).default([]),
   revisionRequest: TaskRevisionRequestSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -149,12 +178,16 @@ export const TaskRecordSchema = z.object({
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 export type TaskAction = z.infer<typeof TaskActionSchema>;
+export type OperatorActionType = z.infer<typeof OperatorActionTypeSchema>;
+export type OperatorActionStatus = z.infer<typeof OperatorActionStatusSchema>;
 export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
 export type GovernanceExecutionMode = z.infer<typeof GovernanceExecutionModeSchema>;
 export type TaskGovernance = z.infer<typeof TaskGovernanceSchema>;
 export type TaskRevisionRequest = z.infer<typeof TaskRevisionRequestSchema>;
 export type TaskSpec = z.infer<typeof TaskSpecSchema>;
 export type TaskArtifact = z.infer<typeof TaskArtifactSchema>;
+export type OperatorActionRecord = z.infer<typeof OperatorActionRecordSchema>;
+export type OperatorActionSummary = z.infer<typeof OperatorActionSummarySchema>;
 export type ACPRunSummaryStatus = z.infer<typeof ACPRunSummaryStatusSchema>;
 export type ACPRunSummaryPhase = z.infer<typeof ACPRunSummaryPhaseSchema>;
 export type ACPRunSummary = z.infer<typeof ACPRunSummarySchema>;
