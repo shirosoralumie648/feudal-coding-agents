@@ -496,13 +496,16 @@ export function createTaskReadModel(options: {
     async saveTask(task: TaskRecord, eventType: string, expectedVersion: number) {
       return options.eventStore.withTransaction(async (tx) => {
         const previousResult = await tx.query(
-          `select payload_json
+          `select payload_json, recovery_state
              from tasks_current
             where id = $1`,
           [task.id]
         );
         const previousTask = previousResult.rows[0]?.payload_json
-          ? syncOperatorActions(TaskRecordSchema.parse(previousResult.rows[0].payload_json), "healthy")
+          ? syncOperatorActions(
+              TaskRecordSchema.parse(previousResult.rows[0].payload_json),
+              RecoveryStateSchema.parse(previousResult.rows[0].recovery_state)
+            )
           : undefined;
         const projectedTask = syncOperatorActions(task, "healthy");
         const appended = await options.eventStore.append(
