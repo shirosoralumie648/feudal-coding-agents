@@ -1,4 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import type { ACPAgentManifest } from "@feudal/acp";
 import type { OperatorActionRecord, OperatorActionSummary, TaskRecord } from "@feudal/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -681,6 +689,45 @@ describe("App", () => {
       })
     ).toBeVisible();
     expect(screen.queryByText("Operator summary unavailable")).not.toBeInTheDocument();
+  });
+
+  it("retries operator summary after a transient startup failure", async () => {
+    const secondTask: TaskRecord = {
+      ...defaultTask,
+      id: "task-2",
+      title: "Recover runner",
+      status: "failed",
+      approvalRunId: undefined,
+      approvalRequest: undefined,
+      governance: undefined,
+      operatorAllowedActions: ["recover", "takeover", "abandon"]
+    };
+
+    mockConsoleApi({
+      initialTasks: [defaultTask, secondTask],
+      failOperatorSummaryInitially: true,
+      operatorSummary: {
+        tasksNeedingOperatorAttention: 1,
+        tasks: [
+          {
+            id: secondTask.id,
+            title: secondTask.title,
+            status: secondTask.status,
+            recoveryState: "healthy",
+            operatorAllowedActions: ["recover", "takeover", "abandon"]
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Recover runner")).toBeVisible(), {
+      timeout: 2_500
+    });
+    const queuePanel = screen.getByRole("heading", { name: "Operator Queue" }).closest("section");
+    expect(queuePanel).not.toBeNull();
+    expect(within(queuePanel as HTMLElement).getByText("1 waiting")).toBeVisible();
   });
 
   it("submits an operator takeover note from task detail", async () => {

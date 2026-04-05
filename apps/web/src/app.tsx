@@ -94,6 +94,8 @@ export function App() {
     tasksNeedingOperatorAttention: 0,
     tasks: []
   });
+  const [operatorSummaryLoaded, setOperatorSummaryLoaded] = useState(false);
+  const [operatorSummaryRetryNonce, setOperatorSummaryRetryNonce] = useState(0);
   const [taskReplay, setTaskReplay] = useState<
     Record<string, Pick<TaskRecord, "id" | "title" | "status">>
   >({});
@@ -125,12 +127,20 @@ export function App() {
       fetchTasks(),
       fetchAgents(),
       fetchRecoverySummary(),
-      fetchOperatorSummary().catch(() => ({
-        tasksNeedingOperatorAttention: 0,
-        tasks: []
-      }))
+      fetchOperatorSummary()
+        .then((summary) => ({
+          loaded: true,
+          summary
+        }))
+        .catch(() => ({
+          loaded: false,
+          summary: {
+            tasksNeedingOperatorAttention: 0,
+            tasks: []
+          }
+        }))
     ])
-      .then(async ([nextTasks, nextAgents, nextRecovery, nextOperatorSummary]) => {
+      .then(async ([nextTasks, nextAgents, nextRecovery, nextOperator]) => {
         const initialTaskId = nextTasks[0]?.id;
         const [initialEvents, initialDiffs, initialOperatorActions] = initialTaskId
           ? await Promise.allSettled([
@@ -148,7 +158,8 @@ export function App() {
           setTasks((current) => mergeLoadedTasks(current, nextTasks));
           setAgents(nextAgents);
           setRecoverySummary(nextRecovery);
-          setOperatorSummary(nextOperatorSummary);
+          setOperatorSummary(nextOperator.summary);
+          setOperatorSummaryLoaded(nextOperator.loaded);
           setSelectedTaskId((current) => current ?? initialTaskId);
           if (initialTaskId) {
             if (initialEvents?.status === "fulfilled") {
@@ -193,37 +204,66 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (operatorSummaryLoaded || tasks.length === 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setOperatorSummaryRetryNonce((current) => current + 1);
+    }, 2_000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [operatorSummaryLoaded, operatorSummaryRetryNonce, tasks.length]);
+
+  useEffect(() => {
     const taskId = selectedTaskId ?? tasks[0]?.id;
 
     const hasEvents = Boolean(taskEvents[taskId]);
     const hasDiffs = Boolean(taskDiffs[taskId]);
     const hasOperatorActions = Boolean(operatorActions[taskId]);
+    const needsOperatorSummary = !operatorSummaryLoaded;
 
-    if (!taskId || (hasEvents && hasDiffs && hasOperatorActions)) {
+    if (!taskId || (hasEvents && hasDiffs && hasOperatorActions && !needsOperatorSummary)) {
       return;
     }
 
     let active = true;
 
-    Promise.all([
+    Promise.allSettled([
       hasEvents ? Promise.resolve(taskEvents[taskId] ?? []) : fetchTaskEvents(taskId),
       hasDiffs ? Promise.resolve(taskDiffs[taskId] ?? []) : fetchTaskDiffs(taskId),
       hasOperatorActions
         ? Promise.resolve(operatorActions[taskId] ?? [])
-        : fetchTaskOperatorActions(taskId)
+        : fetchTaskOperatorActions(taskId),
+      needsOperatorSummary ? fetchOperatorSummary() : Promise.resolve(operatorSummary)
     ])
-      .then(([nextEvents, nextDiffs, nextOperatorActions]) => {
+      .then(([nextEvents, nextDiffs, nextOperatorActions, nextOperatorSummary]) => {
         if (!active) {
           return;
         }
 
         startTransition(() => {
-          setTaskEvents((current) => ({ ...current, [taskId]: nextEvents }));
-          setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs }));
-          setOperatorActions((current) => ({
-            ...current,
-            [taskId]: nextOperatorActions
-          }));
+          if (nextEvents.status === "fulfilled") {
+            setTaskEvents((current) => ({ ...current, [taskId]: nextEvents.value }));
+          }
+
+          if (nextDiffs.status === "fulfilled") {
+            setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs.value }));
+          }
+
+          if (nextOperatorActions.status === "fulfilled") {
+            setOperatorActions((current) => ({
+              ...current,
+              [taskId]: nextOperatorActions.value
+            }));
+          }
+
+          if (nextOperatorSummary.status === "fulfilled") {
+            setOperatorSummary(nextOperatorSummary.value);
+            setOperatorSummaryLoaded(true);
+          }
         });
       })
       .catch((nextError: unknown) => {
@@ -241,7 +281,16 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [operatorActions, selectedTaskId, taskDiffs, taskEvents, tasks]);
+  }, [
+    operatorActions,
+    operatorSummary,
+    operatorSummaryLoaded,
+    operatorSummaryRetryNonce,
+    selectedTaskId,
+    taskDiffs,
+    taskEvents,
+    tasks
+  ]);
 
   const selectedTask =
     tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
@@ -297,6 +346,9 @@ export function App() {
 
       if (nextSummary.status === "fulfilled") {
         setOperatorSummary(nextSummary.value);
+        setOperatorSummaryLoaded(true);
+      } else {
+        setOperatorSummaryLoaded(false);
       }
 
       if (nextEvents.status === "fulfilled") {
@@ -451,6 +503,10 @@ export function App() {
     action: OperatorActionType,
     run: (taskId: string, note: string) => Promise<TaskConsoleRecord>
   ) {
+    if (activeOperatorAction) {
+      return;
+    }
+
     const note = operatorDrafts[taskId]?.trim();
 
     if (!note) {
@@ -567,7 +623,7 @@ export function App() {
           laneLabels={laneLabels}
           operatorActions={selectedTaskOperatorActions}
           operatorNote={selectedTask ? operatorDrafts[selectedTask.id] ?? "" : ""}
-          operatorPending={activeOperatorAction?.taskId === selectedTask?.id}
+          operatorPending={Boolean(activeOperatorAction)}
           onOperatorNoteChange={(value) => {
             if (!selectedTask) {
               return;
