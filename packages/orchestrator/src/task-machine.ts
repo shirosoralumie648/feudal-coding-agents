@@ -43,6 +43,7 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
   },
   needs_revision: {
     "revision.submitted": "planning",
+    "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
   awaiting_approval: {

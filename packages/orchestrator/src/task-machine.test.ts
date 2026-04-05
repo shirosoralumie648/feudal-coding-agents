@@ -111,6 +111,14 @@ describe("transitionTask", () => {
     ).toBe("planning");
   });
 
+  it("routes takeover submissions from needs revision to planning", () => {
+    const needsRevisionTask = { ...baseTask, status: "needs_revision" as const };
+
+    expect(
+      transitionTask(needsRevisionTask, { type: "operator.takeover_submitted" }).status
+    ).toBe("planning");
+  });
+
   it("routes abandon requests from needs revision to abandoned", () => {
     const needsRevisionTask = { ...baseTask, status: "needs_revision" as const };
 

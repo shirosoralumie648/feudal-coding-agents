@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AuditEventSchema,
   OperatorActionRecordSchema,
+  OperatorActionRequestSchema,
   OperatorActionSummarySchema,
   RecoveryStateSchema,
   TaskRecordSchema,
@@ -201,7 +202,7 @@ describe("contracts", () => {
   });
 
   it("accepts operator action history records", () => {
-    const result = OperatorActionRecordSchema.parse({
+    const appliedResult = OperatorActionRecordSchema.parse({
       id: 1,
       taskId: "task-5",
       actionType: "recover",
@@ -209,13 +210,39 @@ describe("contracts", () => {
       note: "Recovered from failed state",
       actorType: "operator",
       actorId: "operator-1",
-      reason: "resume execution after dependency fix",
-      createdAt: "2026-04-04T00:00:00.000Z"
+      createdAt: "2026-04-04T00:00:00.000Z",
+      appliedAt: "2026-04-04T00:00:10.000Z"
+    });
+    const rejectedResult = OperatorActionRecordSchema.parse({
+      id: 2,
+      taskId: "task-6",
+      actionType: "takeover",
+      status: "rejected",
+      note: "Takeover request rejected by policy",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      rejectedAt: "2026-04-04T00:00:10.000Z",
+      rejectionReason: "active approval review in progress"
     });
 
-    expect(result.id).toBe(1);
-    expect(result.actionType).toBe("recover");
-    expect(result.status).toBe("applied");
+    expect(appliedResult.id).toBe(1);
+    expect(appliedResult.actionType).toBe("recover");
+    expect(appliedResult.appliedAt).toBe("2026-04-04T00:00:10.000Z");
+    expect(rejectedResult.status).toBe("rejected");
+    expect(rejectedResult.rejectionReason).toBe(
+      "active approval review in progress"
+    );
+  });
+
+  it("accepts operator action request payloads", () => {
+    const result = OperatorActionRequestSchema.parse({
+      actionType: "abandon",
+      note: "Abort task due to invalid external dependency state",
+      confirm: true
+    });
+
+    expect(result.actionType).toBe("abandon");
+    expect(result.confirm).toBe(true);
   });
 
   it("accepts operator action summary payloads", () => {

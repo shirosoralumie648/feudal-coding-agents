@@ -25,6 +25,11 @@ export const OperatorActionStatusSchema = z.enum([
   "applied",
   "rejected"
 ]);
+export const OperatorActionRequestSchema = z.object({
+  actionType: OperatorActionTypeSchema,
+  note: z.string().min(1),
+  confirm: z.boolean().optional()
+});
 export const RecoveryStateSchema = z.enum([
   "healthy",
   "replaying",
@@ -90,7 +95,9 @@ export const OperatorActionRecordSchema = z.object({
   note: z.string().min(1),
   actorType: z.string(),
   actorId: z.string().optional(),
-  reason: z.string().optional(),
+  appliedAt: z.string().optional(),
+  rejectedAt: z.string().optional(),
+  rejectionReason: z.string().optional(),
   createdAt: z.string(),
 });
 
@@ -184,6 +191,7 @@ export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 export type TaskAction = z.infer<typeof TaskActionSchema>;
 export type OperatorActionType = z.infer<typeof OperatorActionTypeSchema>;
 export type OperatorActionStatus = z.infer<typeof OperatorActionStatusSchema>;
+export type OperatorActionRequest = z.infer<typeof OperatorActionRequestSchema>;
 export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
 export type GovernanceExecutionMode = z.infer<typeof GovernanceExecutionModeSchema>;
 export type TaskGovernance = z.infer<typeof TaskGovernanceSchema>;
