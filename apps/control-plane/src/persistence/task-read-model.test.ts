@@ -257,6 +257,33 @@ describe("task read model persistence projections", () => {
     });
   });
 
+  it("records synced operatorAllowedActions in persisted task diffs", async () => {
+    const { readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "failed",
+        operatorAllowedActions: [],
+        approvalRunId: undefined,
+        approvalRequest: undefined
+      },
+      "task.execution_failed",
+      0
+    );
+
+    await expect(readModel.listTaskDiffs(task.id)).resolves.toEqual([
+      expect.objectContaining({
+        payloadJson: expect.objectContaining({
+          changedPaths: expect.arrayContaining(["/operatorAllowedActions"]),
+          afterSubsetJson: expect.objectContaining({
+            operatorAllowedActions: ["recover", "takeover", "abandon"]
+          })
+        })
+      })
+    ]);
+  });
+
   it("persists explicit operator action records and returns them by task", async () => {
     const { readModel } = await createReadModel();
     await readModel.saveTask(task, "task.awaiting_approval", 0);

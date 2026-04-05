@@ -502,20 +502,20 @@ export function createTaskReadModel(options: {
           [task.id]
         );
         const previousTask = previousResult.rows[0]?.payload_json
-          ? TaskRecordSchema.parse(previousResult.rows[0].payload_json)
+          ? syncOperatorActions(TaskRecordSchema.parse(previousResult.rows[0].payload_json), "healthy")
           : undefined;
+        const projectedTask = syncOperatorActions(task, "healthy");
         const appended = await options.eventStore.append(
           {
             streamType: "task",
             streamId: task.id,
             expectedVersion,
-            events: buildTaskEventInputs(task, eventType, previousTask)
+            events: buildTaskEventInputs(projectedTask, eventType, previousTask)
           },
           tx
         );
 
         const latestEvent = appended.at(-1);
-        const projectedTask = syncOperatorActions(task, "healthy");
 
         await upsertTaskProjection({
           queryable: tx,
