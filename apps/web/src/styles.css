@@ -236,6 +236,7 @@ textarea {
 }
 
 .task-form button:disabled,
+.operator-console-panel button:disabled,
 .detail-list button:disabled {
   opacity: 0.55;
 }
