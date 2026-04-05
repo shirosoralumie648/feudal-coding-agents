@@ -133,12 +133,12 @@ export function App() {
       .then(async ([nextTasks, nextAgents, nextRecovery, nextOperatorSummary]) => {
         const initialTaskId = nextTasks[0]?.id;
         const [initialEvents, initialDiffs, initialOperatorActions] = initialTaskId
-          ? await Promise.all([
+          ? await Promise.allSettled([
               fetchTaskEvents(initialTaskId),
               fetchTaskDiffs(initialTaskId),
-              fetchTaskOperatorActions(initialTaskId).catch(() => [])
+              fetchTaskOperatorActions(initialTaskId)
             ])
-          : [[], [], []];
+          : [];
 
         if (!active) {
           return;
@@ -151,12 +151,26 @@ export function App() {
           setOperatorSummary(nextOperatorSummary);
           setSelectedTaskId((current) => current ?? initialTaskId);
           if (initialTaskId) {
-            setTaskEvents((current) => ({ ...current, [initialTaskId]: initialEvents }));
-            setTaskDiffs((current) => ({ ...current, [initialTaskId]: initialDiffs }));
-            setOperatorActions((current) => ({
-              ...current,
-              [initialTaskId]: initialOperatorActions
-            }));
+            if (initialEvents?.status === "fulfilled") {
+              setTaskEvents((current) => ({
+                ...current,
+                [initialTaskId]: initialEvents.value
+              }));
+            }
+
+            if (initialDiffs?.status === "fulfilled") {
+              setTaskDiffs((current) => ({
+                ...current,
+                [initialTaskId]: initialDiffs.value
+              }));
+            }
+
+            if (initialOperatorActions?.status === "fulfilled") {
+              setOperatorActions((current) => ({
+                ...current,
+                [initialTaskId]: initialOperatorActions.value
+              }));
+            }
           }
           setError(undefined);
         });

@@ -90,11 +90,13 @@ function mockConsoleApi(options?: {
   rejectedTask?: TaskRecord;
   revisedTask?: TaskRecord;
   operatorActions?: OperatorActionRecord[];
+  operatorActionsByTaskId?: Record<string, OperatorActionRecord[]>;
   operatorSummary?: OperatorActionSummary;
   takenOverTask?: TaskRecord;
   takenOverResponse?: Promise<Response>;
   recoveredTask?: TaskRecord;
   abandonedTask?: TaskRecord;
+  failOperatorActionsInitially?: boolean;
   failOperatorSummaryInitially?: boolean;
   failOperatorSummaryAfterFirst?: boolean;
   recoverySummary?: {
@@ -112,6 +114,7 @@ function mockConsoleApi(options?: {
 }) {
   const agents = options?.agents ?? defaultAgents;
   let tasks = options?.initialTasks ?? [defaultTask];
+  const operatorActionRequests = new Map<string, number>();
   let operatorSummaryRequests = 0;
 
   const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
@@ -149,7 +152,17 @@ function mockConsoleApi(options?: {
     }
 
     if (taskOperatorActionsMatch && method === "GET") {
-      return json(options?.operatorActions ?? []);
+      const taskId = taskOperatorActionsMatch[1];
+      const nextCount = (operatorActionRequests.get(taskId) ?? 0) + 1;
+      operatorActionRequests.set(taskId, nextCount);
+
+      if (options?.failOperatorActionsInitially && nextCount === 1) {
+        return Promise.reject(new Error("Operator history unavailable"));
+      }
+
+      return json(
+        options?.operatorActionsByTaskId?.[taskId] ?? options?.operatorActions ?? []
+      );
     }
 
     if (url.endsWith("/api/operator-actions/summary") && method === "GET") {
@@ -743,18 +756,20 @@ describe("App", () => {
           operatorAllowedActions: []
         }
       ],
-      operatorActions: [
-        {
-          id: 2,
-          taskId: defaultTask.id,
-          actionType: "takeover",
-          status: "applied",
-          note: "Already re-planned this task.",
-          actorType: "user",
-          createdAt: "2026-04-05T00:10:00.000Z",
-          appliedAt: "2026-04-05T00:10:01.000Z"
-        }
-      ]
+      operatorActionsByTaskId: {
+        [defaultTask.id]: [
+          {
+            id: 2,
+            taskId: defaultTask.id,
+            actionType: "takeover",
+            status: "applied",
+            note: "Already re-planned this task.",
+            actorType: "user",
+            createdAt: "2026-04-05T00:10:00.000Z",
+            appliedAt: "2026-04-05T00:10:01.000Z"
+          }
+        ]
+      }
     });
 
     render(<App />);
@@ -762,6 +777,40 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Operator Console" })).toBeVisible();
     expect(screen.getByText("takeover / applied")).toBeVisible();
     expect(screen.queryByLabelText("Operator note")).not.toBeInTheDocument();
+  });
+
+  it("retries initial operator history loads after a transient failure", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: []
+        }
+      ],
+      failOperatorActionsInitially: true,
+      operatorActionsByTaskId: {
+        [defaultTask.id]: [
+          {
+            id: 3,
+            taskId: defaultTask.id,
+            actionType: "takeover",
+            status: "applied",
+            note: "Recovered the operator history after retry.",
+            actorType: "user",
+            createdAt: "2026-04-05T00:20:00.000Z",
+            appliedAt: "2026-04-05T00:20:01.000Z"
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Operator Console" })).toBeVisible();
+    expect(
+      await screen.findByText("Recovered the operator history after retry.")
+    ).toBeVisible();
+    expect(screen.queryByText("Operator history unavailable")).not.toBeInTheDocument();
   });
 
   it("disables operator actions until a non-empty note is present", async () => {
