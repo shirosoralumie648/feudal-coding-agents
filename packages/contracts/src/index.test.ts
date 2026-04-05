@@ -202,32 +202,39 @@ describe("contracts", () => {
 
   it("accepts operator action history records", () => {
     const result = OperatorActionRecordSchema.parse({
-      id: "op-action-1",
+      id: 1,
       taskId: "task-5",
       actionType: "recover",
       status: "applied",
-      requestedBy: "operator-1",
       note: "Recovered from failed state",
-      createdAt: "2026-04-04T00:00:00.000Z",
-      updatedAt: "2026-04-04T00:00:10.000Z"
+      actorType: "operator",
+      actorId: "operator-1",
+      reason: "resume execution after dependency fix",
+      createdAt: "2026-04-04T00:00:00.000Z"
     });
 
+    expect(result.id).toBe(1);
     expect(result.actionType).toBe("recover");
     expect(result.status).toBe("applied");
   });
 
   it("accepts operator action summary payloads", () => {
     const result = OperatorActionSummarySchema.parse({
-      taskId: "task-5",
-      lastActionAt: "2026-04-04T00:00:10.000Z",
-      counts: {
-        requested: 1,
-        applied: 2,
-        rejected: 0
-      }
+      tasksNeedingOperatorAttention: 1,
+      tasks: [
+        {
+          id: "task-5",
+          title: "Recover stuck task",
+          status: "executing",
+          recoveryState: "recovery_required",
+          recoveryReason: "run heartbeat timeout",
+          operatorAllowedActions: ["recover", "takeover", "abandon"]
+        }
+      ]
     });
 
-    expect(result.counts.applied).toBe(2);
+    expect(result.tasksNeedingOperatorAttention).toBe(1);
+    expect(result.tasks[0]?.recoveryState).toBe("recovery_required");
   });
 
   it("accepts audit event and recovery state metadata", () => {

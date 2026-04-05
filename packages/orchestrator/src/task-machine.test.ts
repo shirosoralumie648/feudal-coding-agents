@@ -71,6 +71,30 @@ describe("transitionTask", () => {
     );
   });
 
+  it("routes executing task recovery back to dispatching", () => {
+    const executingTask = { ...baseTask, status: "executing" as const };
+
+    expect(
+      transitionTask(executingTask, { type: "operator.recovered" }).status
+    ).toBe("dispatching");
+  });
+
+  it("routes dispatching task recovery back to dispatching", () => {
+    const dispatchingTask = { ...baseTask, status: "dispatching" as const };
+
+    expect(
+      transitionTask(dispatchingTask, { type: "operator.recovered" }).status
+    ).toBe("dispatching");
+  });
+
+  it("routes verifying task recovery back to dispatching", () => {
+    const verifyingTask = { ...baseTask, status: "verifying" as const };
+
+    expect(
+      transitionTask(verifyingTask, { type: "operator.recovered" }).status
+    ).toBe("dispatching");
+  });
+
   it("routes takeover submissions from awaiting approval to planning", () => {
     const awaitingTask = { ...baseTask, status: "awaiting_approval" as const };
 

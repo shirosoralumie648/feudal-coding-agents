@@ -25,6 +25,11 @@ export const OperatorActionStatusSchema = z.enum([
   "applied",
   "rejected"
 ]);
+export const RecoveryStateSchema = z.enum([
+  "healthy",
+  "replaying",
+  "recovery_required"
+]);
 
 export const ReviewVerdictSchema = z.enum([
   "pending",
@@ -78,24 +83,29 @@ export const TaskHistoryEntrySchema = z.object({
 });
 
 export const OperatorActionRecordSchema = z.object({
-  id: z.string(),
+  id: z.number().int().nonnegative(),
   taskId: z.string(),
   actionType: OperatorActionTypeSchema,
   status: OperatorActionStatusSchema,
-  requestedBy: z.string(),
-  note: z.string().optional(),
+  note: z.string().min(1),
+  actorType: z.string(),
+  actorId: z.string().optional(),
+  reason: z.string().optional(),
   createdAt: z.string(),
-  updatedAt: z.string()
 });
 
 export const OperatorActionSummarySchema = z.object({
-  taskId: z.string(),
-  lastActionAt: z.string().optional(),
-  counts: z.object({
-    requested: z.number().int().nonnegative(),
-    applied: z.number().int().nonnegative(),
-    rejected: z.number().int().nonnegative()
-  })
+  tasksNeedingOperatorAttention: z.number().int().nonnegative(),
+  tasks: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: TaskStatusSchema,
+      recoveryState: RecoveryStateSchema,
+      recoveryReason: z.string().optional(),
+      operatorAllowedActions: z.array(OperatorActionTypeSchema)
+    })
+  )
 });
 
 export const TaskSpecSchema = z.object({
@@ -151,12 +161,6 @@ export const AuditEventSchema = z.object({
   payloadJson: z.record(z.string(), z.unknown()),
   metadataJson: z.record(z.string(), z.unknown())
 });
-
-export const RecoveryStateSchema = z.enum([
-  "healthy",
-  "replaying",
-  "recovery_required"
-]);
 
 export const TaskRecordSchema = z.object({
   id: z.string(),

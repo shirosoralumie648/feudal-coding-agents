@@ -53,12 +53,14 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
   },
   dispatching: {
     "dispatch.completed": "executing",
+    "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
   executing: {
     "execution.completed": "verifying",
     "execution.failed": "failed",
+    "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
@@ -66,6 +68,7 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
     "verification.passed": "completed",
     "verification.partial": "partial_success",
     "verification.failed": "failed",
+    "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
