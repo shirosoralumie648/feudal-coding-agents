@@ -95,6 +95,8 @@ function mockConsoleApi(options?: {
   takenOverResponse?: Promise<Response>;
   recoveredTask?: TaskRecord;
   abandonedTask?: TaskRecord;
+  failOperatorSummaryInitially?: boolean;
+  failOperatorSummaryAfterFirst?: boolean;
   recoverySummary?: {
     tasksNeedingRecovery: number;
     runsNeedingRecovery: number;
@@ -110,6 +112,7 @@ function mockConsoleApi(options?: {
 }) {
   const agents = options?.agents ?? defaultAgents;
   let tasks = options?.initialTasks ?? [defaultTask];
+  let operatorSummaryRequests = 0;
 
   const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
@@ -150,6 +153,16 @@ function mockConsoleApi(options?: {
     }
 
     if (url.endsWith("/api/operator-actions/summary") && method === "GET") {
+      operatorSummaryRequests += 1;
+
+      if (options?.failOperatorSummaryInitially && operatorSummaryRequests === 1) {
+        return Promise.reject(new Error("Operator summary unavailable"));
+      }
+
+      if (options?.failOperatorSummaryAfterFirst && operatorSummaryRequests > 1) {
+        return Promise.reject(new Error("Operator summary unavailable"));
+      }
+
       return json(
         options?.operatorSummary ?? {
           tasksNeedingOperatorAttention: 0,
@@ -643,6 +656,20 @@ describe("App", () => {
     expect(await screen.findByText("recover / takeover / abandon")).toBeVisible();
   });
 
+  it("keeps loading the console when operator summary is unavailable at startup", async () => {
+    mockConsoleApi({ failOperatorSummaryInitially: true });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 3,
+        name: defaultTask.title
+      })
+    ).toBeVisible();
+    expect(screen.queryByText("Operator summary unavailable")).not.toBeInTheDocument();
+  });
+
   it("submits an operator takeover note from task detail", async () => {
     const fetchMock = mockConsoleApi({
       initialTasks: [
@@ -809,7 +836,10 @@ describe("App", () => {
       target: { value: "Re-plan this task." }
     });
     fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
-    fireEvent.click((await screen.findAllByRole("button", { name: "Open task" }))[1]!);
+
+    const queueButtons = await screen.findAllByRole("button", { name: "Open task" });
+    expect(queueButtons[1]).toBeDisabled();
+    fireEvent.click(queueButtons[1]!);
 
     expect(
       screen.getByRole("heading", {
@@ -832,5 +862,37 @@ describe("App", () => {
         })
       );
     });
+  });
+
+  it("keeps a successful operator action from surfacing auxiliary refresh errors", async () => {
+    const fetchMock = mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover"]
+        }
+      ],
+      failOperatorSummaryAfterFirst: true
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Operator note"), {
+      target: { value: "Re-plan this task." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/tasks/${defaultTask.id}/operator-actions/takeover`,
+        expect.objectContaining({
+          method: "POST"
+        })
+      )
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText("Operator note") as HTMLTextAreaElement).value).toBe("")
+    );
+    expect(screen.queryByText("Operator summary unavailable")).not.toBeInTheDocument();
   });
 });

@@ -125,7 +125,10 @@ export function App() {
       fetchTasks(),
       fetchAgents(),
       fetchRecoverySummary(),
-      fetchOperatorSummary()
+      fetchOperatorSummary().catch(() => ({
+        tasksNeedingOperatorAttention: 0,
+        tasks: []
+      }))
     ])
       .then(async ([nextTasks, nextAgents, nextRecovery, nextOperatorSummary]) => {
         const initialTaskId = nextTasks[0]?.id;
@@ -133,7 +136,7 @@ export function App() {
           ? await Promise.all([
               fetchTaskEvents(initialTaskId),
               fetchTaskDiffs(initialTaskId),
-              fetchTaskOperatorActions(initialTaskId)
+              fetchTaskOperatorActions(initialTaskId).catch(() => [])
             ])
           : [[], [], []];
 
@@ -266,7 +269,7 @@ export function App() {
   }
 
   async function refreshOperatorContext(taskId: string) {
-    const [nextActions, nextSummary, nextEvents, nextDiffs] = await Promise.all([
+    const [nextActions, nextSummary, nextEvents, nextDiffs] = await Promise.allSettled([
       fetchTaskOperatorActions(taskId),
       fetchOperatorSummary(),
       fetchTaskEvents(taskId),
@@ -274,10 +277,21 @@ export function App() {
     ]);
 
     startTransition(() => {
-      setOperatorActions((current) => ({ ...current, [taskId]: nextActions }));
-      setOperatorSummary(nextSummary);
-      setTaskEvents((current) => ({ ...current, [taskId]: nextEvents }));
-      setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs }));
+      if (nextActions.status === "fulfilled") {
+        setOperatorActions((current) => ({ ...current, [taskId]: nextActions.value }));
+      }
+
+      if (nextSummary.status === "fulfilled") {
+        setOperatorSummary(nextSummary.value);
+      }
+
+      if (nextEvents.status === "fulfilled") {
+        setTaskEvents((current) => ({ ...current, [taskId]: nextEvents.value }));
+      }
+
+      if (nextDiffs.status === "fulfilled") {
+        setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs.value }));
+      }
     });
   }
 
@@ -524,6 +538,7 @@ export function App() {
           }
         />
         <OperatorQueuePanel
+          disabled={Boolean(activeOperatorAction)}
           activeTaskId={selectedTask?.id}
           onSelectTask={(taskId) => {
             if (activeOperatorAction) {

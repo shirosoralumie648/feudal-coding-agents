@@ -2,12 +2,13 @@ import type { OperatorActionSummary } from "@feudal/contracts";
 
 interface OperatorQueuePanelProps {
   activeTaskId?: string;
+  disabled?: boolean;
   summary: OperatorActionSummary;
   onSelectTask: (taskId: string) => void;
 }
 
 export function OperatorQueuePanel(props: OperatorQueuePanelProps) {
-  const { activeTaskId, onSelectTask, summary } = props;
+  const { activeTaskId, disabled = false, onSelectTask, summary } = props;
 
   return (
     <section className="panel panel-operator-queue">
@@ -26,7 +27,7 @@ export function OperatorQueuePanel(props: OperatorQueuePanelProps) {
             </div>
             <button
               type="button"
-              disabled={activeTaskId === task.id}
+              disabled={disabled || activeTaskId === task.id}
               onClick={() => onSelectTask(task.id)}
             >
               Open task
