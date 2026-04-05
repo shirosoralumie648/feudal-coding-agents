@@ -1,24 +1,36 @@
 import { startTransition, useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { ACPAgentManifest } from "@feudal/acp";
-import type { TaskRecord, TaskStatus } from "@feudal/contracts";
+import type {
+  OperatorActionRecord,
+  OperatorActionSummary,
+  OperatorActionType,
+  TaskRecord,
+  TaskStatus
+} from "@feudal/contracts";
 import { AgentRegistryPanel } from "./components/agent-registry-panel";
 import { ApprovalInboxPanel } from "./components/approval-inbox-panel";
 import { DiffInspectorPanel } from "./components/diff-inspector-panel";
 import { NewTaskPanel } from "./components/new-task-panel";
+import { OperatorQueuePanel } from "./components/operator-queue-panel";
 import { TaskDetailPanel } from "./components/task-detail-panel";
 import { TimelinePanel } from "./components/timeline-panel";
 import {
+  abandonTask,
   approveTask,
   createTask,
   fetchAgents,
+  fetchOperatorSummary,
   fetchRecoverySummary,
+  fetchTaskOperatorActions,
   fetchTaskDiffs,
   fetchTaskEvents,
   fetchTaskReplay,
   fetchTasks,
+  recoverTask,
   rejectTask,
   reviseTask,
+  takeoverTask,
   type CreateTaskInput,
   type RecoverySummary,
   type TaskConsoleRecord,
@@ -74,6 +86,13 @@ export function App() {
   const [agents, setAgents] = useState<ACPAgentManifest[]>([]);
   const [taskEvents, setTaskEvents] = useState<Record<string, TaskEventSummary[]>>({});
   const [taskDiffs, setTaskDiffs] = useState<Record<string, TaskDiffEntry[]>>({});
+  const [operatorActions, setOperatorActions] = useState<
+    Record<string, OperatorActionRecord[]>
+  >({});
+  const [operatorSummary, setOperatorSummary] = useState<OperatorActionSummary>({
+    tasksNeedingOperatorAttention: 0,
+    tasks: []
+  });
   const [taskReplay, setTaskReplay] = useState<
     Record<string, Pick<TaskRecord, "id" | "title" | "status">>
   >({});
@@ -85,6 +104,10 @@ export function App() {
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeGovernanceId, setActiveGovernanceId] = useState<string>();
+  const [activeOperatorAction, setActiveOperatorAction] = useState<
+    { taskId: string; action: OperatorActionType } | undefined
+  >();
+  const [operatorDrafts, setOperatorDrafts] = useState<Record<string, string>>({});
   const [revisionDrafts, setRevisionDrafts] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<CreateTaskInput>({
     title: "",
@@ -97,15 +120,21 @@ export function App() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([fetchTasks(), fetchAgents(), fetchRecoverySummary()])
-      .then(async ([nextTasks, nextAgents, nextRecovery]) => {
+    Promise.all([
+      fetchTasks(),
+      fetchAgents(),
+      fetchRecoverySummary(),
+      fetchOperatorSummary()
+    ])
+      .then(async ([nextTasks, nextAgents, nextRecovery, nextOperatorSummary]) => {
         const initialTaskId = nextTasks[0]?.id;
-        const [initialEvents, initialDiffs] = initialTaskId
+        const [initialEvents, initialDiffs, initialOperatorActions] = initialTaskId
           ? await Promise.all([
               fetchTaskEvents(initialTaskId),
-              fetchTaskDiffs(initialTaskId)
+              fetchTaskDiffs(initialTaskId),
+              fetchTaskOperatorActions(initialTaskId)
             ])
-          : [[], []];
+          : [[], [], []];
 
         if (!active) {
           return;
@@ -115,10 +144,15 @@ export function App() {
           setTasks((current) => mergeLoadedTasks(current, nextTasks));
           setAgents(nextAgents);
           setRecoverySummary(nextRecovery);
+          setOperatorSummary(nextOperatorSummary);
           setSelectedTaskId((current) => current ?? initialTaskId);
           if (initialTaskId) {
             setTaskEvents((current) => ({ ...current, [initialTaskId]: initialEvents }));
             setTaskDiffs((current) => ({ ...current, [initialTaskId]: initialDiffs }));
+            setOperatorActions((current) => ({
+              ...current,
+              [initialTaskId]: initialOperatorActions
+            }));
           }
           setError(undefined);
         });
@@ -143,14 +177,24 @@ export function App() {
   useEffect(() => {
     const taskId = selectedTaskId ?? tasks[0]?.id;
 
-    if (!taskId || (taskEvents[taskId] && taskDiffs[taskId])) {
+    const hasEvents = Boolean(taskEvents[taskId]);
+    const hasDiffs = Boolean(taskDiffs[taskId]);
+    const hasOperatorActions = Boolean(operatorActions[taskId]);
+
+    if (!taskId || (hasEvents && hasDiffs && hasOperatorActions)) {
       return;
     }
 
     let active = true;
 
-    Promise.all([fetchTaskEvents(taskId), fetchTaskDiffs(taskId)])
-      .then(([nextEvents, nextDiffs]) => {
+    Promise.all([
+      hasEvents ? Promise.resolve(taskEvents[taskId] ?? []) : fetchTaskEvents(taskId),
+      hasDiffs ? Promise.resolve(taskDiffs[taskId] ?? []) : fetchTaskDiffs(taskId),
+      hasOperatorActions
+        ? Promise.resolve(operatorActions[taskId] ?? [])
+        : fetchTaskOperatorActions(taskId)
+    ])
+      .then(([nextEvents, nextDiffs, nextOperatorActions]) => {
         if (!active) {
           return;
         }
@@ -158,6 +202,10 @@ export function App() {
         startTransition(() => {
           setTaskEvents((current) => ({ ...current, [taskId]: nextEvents }));
           setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs }));
+          setOperatorActions((current) => ({
+            ...current,
+            [taskId]: nextOperatorActions
+          }));
         });
       })
       .catch((nextError: unknown) => {
@@ -175,12 +223,15 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [selectedTaskId, taskDiffs, taskEvents, tasks]);
+  }, [operatorActions, selectedTaskId, taskDiffs, taskEvents, tasks]);
 
   const selectedTask =
     tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
   const selectedTaskEvents = selectedTask ? taskEvents[selectedTask.id] ?? [] : [];
   const selectedTaskDiffs = selectedTask ? taskDiffs[selectedTask.id] ?? [] : [];
+  const selectedTaskOperatorActions = selectedTask
+    ? operatorActions[selectedTask.id] ?? []
+    : [];
   const selectedReplayTask = selectedTask ? taskReplay[selectedTask.id] : undefined;
   const awaitingTasks = tasks.filter((task) => task.status === "awaiting_approval");
   const governanceTasks = tasks.filter((task) => {
@@ -210,6 +261,22 @@ export function App() {
       const nextTasks = [...current];
       nextTasks[existingIndex] = nextTask;
       return nextTasks;
+    });
+  }
+
+  async function refreshOperatorContext(taskId: string) {
+    const [nextActions, nextSummary, nextEvents, nextDiffs] = await Promise.all([
+      fetchTaskOperatorActions(taskId),
+      fetchOperatorSummary(),
+      fetchTaskEvents(taskId),
+      fetchTaskDiffs(taskId)
+    ]);
+
+    startTransition(() => {
+      setOperatorActions((current) => ({ ...current, [taskId]: nextActions }));
+      setOperatorSummary(nextSummary);
+      setTaskEvents((current) => ({ ...current, [taskId]: nextEvents }));
+      setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs }));
     });
   }
 
@@ -350,6 +417,45 @@ export function App() {
     }
   }
 
+  async function handleOperatorAction(
+    taskId: string,
+    action: OperatorActionType,
+    run: (taskId: string, note: string) => Promise<TaskConsoleRecord>
+  ) {
+    const note = operatorDrafts[taskId]?.trim();
+
+    if (!note) {
+      return;
+    }
+
+    if (action === "abandon" && !window.confirm("Abandon this task?")) {
+      return;
+    }
+
+    setActiveOperatorAction({ taskId, action });
+
+    try {
+      const nextTask = await run(taskId, note);
+
+      startTransition(() => {
+        upsertTask(nextTask);
+        setSelectedTaskId(nextTask.id);
+        setOperatorDrafts((current) => ({ ...current, [taskId]: "" }));
+        setError(undefined);
+      });
+
+      await refreshOperatorContext(taskId);
+    } catch (nextError: unknown) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Unable to execute the operator action."
+      );
+    } finally {
+      setActiveOperatorAction(undefined);
+    }
+  }
+
   return (
     <div className="shell">
       <header className="hero">
@@ -416,8 +522,38 @@ export function App() {
             setDraft((current) => ({ ...current, requiresApproval: checked }))
           }
         />
+        <OperatorQueuePanel
+          activeTaskId={selectedTask?.id}
+          onSelectTask={(taskId) => setSelectedTaskId(taskId)}
+          summary={operatorSummary}
+        />
         <TaskDetailPanel
           laneLabels={laneLabels}
+          operatorActions={selectedTaskOperatorActions}
+          operatorNote={selectedTask ? operatorDrafts[selectedTask.id] ?? "" : ""}
+          operatorPending={activeOperatorAction?.taskId === selectedTask?.id}
+          onOperatorNoteChange={(value) => {
+            if (!selectedTask) {
+              return;
+            }
+
+            setOperatorDrafts((current) => ({ ...current, [selectedTask.id]: value }));
+          }}
+          onRecover={() =>
+            selectedTask
+              ? handleOperatorAction(selectedTask.id, "recover", recoverTask)
+              : Promise.resolve()
+          }
+          onTakeover={() =>
+            selectedTask
+              ? handleOperatorAction(selectedTask.id, "takeover", takeoverTask)
+              : Promise.resolve()
+          }
+          onAbandon={() =>
+            selectedTask
+              ? handleOperatorAction(selectedTask.id, "abandon", abandonTask)
+              : Promise.resolve()
+          }
           onRevisionNoteChange={(value) => {
             if (!selectedTask) {
               return;
