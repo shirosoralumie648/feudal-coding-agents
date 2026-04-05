@@ -205,7 +205,16 @@ export class MemoryTaskStore implements TaskStore {
   }
 
   async getOperatorActionSummary() {
-    const tasks = [...this.tasks.values()].filter((task) => task.operatorAllowedActions.length > 0);
+    const tasks = [...this.tasks.values()]
+      .filter(
+        (task) => task.status === "failed" || task.recoveryState === "recovery_required"
+      )
+      .sort((left, right) => {
+        const leftPriority = left.recoveryState === "recovery_required" ? 1 : 0;
+        const rightPriority = right.recoveryState === "recovery_required" ? 1 : 0;
+
+        return rightPriority - leftPriority;
+      });
 
     return {
       tasksNeedingOperatorAttention: tasks.length,

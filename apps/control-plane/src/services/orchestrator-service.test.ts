@@ -418,4 +418,48 @@ describe("orchestrator service operator actions", () => {
       expect.objectContaining({ actionType: "recover", status: "rejected" })
     ]);
   });
+
+  it("summarizes only tasks that need operator attention", async () => {
+    const store = new MemoryTaskStore();
+    const failingClient: ACPClient = {
+      ...createMockACPClient(),
+      async runAgent(input) {
+        if (input.agent === "gongbu-executor") {
+          throw new Error("executor unavailable");
+        }
+
+        return createMockACPClient().runAgent(input);
+      }
+    };
+    const failingService = createServiceWithGateway({
+      realClient: failingClient,
+      store
+    });
+    const service = createServiceWithGateway({ store });
+
+    const failed = await failingService.createTask({
+      id: "task-summary-failed",
+      title: "Summary failed task",
+      prompt: "Create a failed task",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+    const awaitingApproval = await service.createTask({
+      id: "task-summary-awaiting-approval",
+      title: "Summary approval task",
+      prompt: "Create an approval task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    expect(failed.status).toBe("failed");
+    expect(awaitingApproval.status).toBe("awaiting_approval");
+
+    const summary = await service.getOperatorActionSummary();
+
+    expect(summary.tasksNeedingOperatorAttention).toBe(1);
+    expect(summary.tasks.map((task) => task.id)).toEqual([failed.id]);
+  });
 });
