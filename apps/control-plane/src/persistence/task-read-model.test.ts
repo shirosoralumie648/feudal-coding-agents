@@ -257,6 +257,57 @@ describe("task read model persistence projections", () => {
     });
   });
 
+  it("persists explicit operator action records and returns them by task", async () => {
+    const { readModel } = await createReadModel();
+    await readModel.saveTask(task, "task.awaiting_approval", 0);
+
+    await readModel.recordOperatorAction({
+      taskId: task.id,
+      actionType: "takeover",
+      status: "requested",
+      note: "Re-plan this task with a stronger rollback note."
+    });
+    await readModel.recordOperatorAction({
+      taskId: task.id,
+      actionType: "takeover",
+      status: "applied",
+      note: "Re-plan this task with a stronger rollback note.",
+      appliedAt: "2026-04-03T00:06:00.000Z"
+    });
+
+    await expect(readModel.listOperatorActions(task.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "takeover", status: "requested" }),
+      expect.objectContaining({ actionType: "takeover", status: "applied" })
+    ]);
+  });
+
+  it("summarizes operator-attention tasks from recovery and failed projections", async () => {
+    const { readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        id: "task-failed",
+        status: "failed",
+        operatorAllowedActions: ["recover", "takeover", "abandon"],
+        approvalRunId: undefined,
+        approvalRequest: undefined
+      },
+      "task.execution_failed",
+      0
+    );
+
+    await expect(readModel.getOperatorActionSummary()).resolves.toMatchObject({
+      tasksNeedingOperatorAttention: 1,
+      tasks: [
+        {
+          id: "task-failed",
+          operatorAllowedActions: ["recover", "takeover", "abandon"]
+        }
+      ]
+    });
+  });
+
   it("lists task runs from runs_current and marks rebuilt in-flight tasks as recovery_required", async () => {
     const { pool, readModel } = await createReadModel();
 
@@ -313,6 +364,37 @@ describe("task read model persistence projections", () => {
     await expect(readModel.getRecoverySummary()).resolves.toEqual({
       tasksNeedingRecovery: 1,
       runsNeedingRecovery: 0
+    });
+  });
+
+  it("recomputes operatorAllowedActions when rebuild marks a task recovery_required", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "executing",
+        operatorAllowedActions: [],
+        runs: [],
+        runIds: [],
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        updatedAt: "2026-04-03T00:20:00.000Z"
+      },
+      "task.executing",
+      0
+    );
+
+    await pool.query("delete from tasks_current");
+    await pool.query("delete from task_history_entries");
+    await pool.query("delete from artifacts_current");
+    await pool.query("delete from projection_checkpoint");
+
+    await readModel.rebuildProjectionsIfNeeded();
+
+    await expect(readModel.getTask(task.id)).resolves.toMatchObject({
+      recoveryState: "recovery_required",
+      operatorAllowedActions: ["recover", "takeover", "abandon"]
     });
   });
 

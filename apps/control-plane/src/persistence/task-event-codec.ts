@@ -12,7 +12,8 @@ const TRACKED_DIFF_FIELDS = [
   "approvalRequest",
   "runs",
   "governance",
-  "revisionRequest"
+  "revisionRequest",
+  "operatorAllowedActions"
 ] as const;
 
 type DiffField = (typeof TRACKED_DIFF_FIELDS)[number];
