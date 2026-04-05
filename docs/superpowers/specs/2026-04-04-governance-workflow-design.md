@@ -63,7 +63,7 @@ Governance decisions should be projected into the task record returned by existi
 - `sensitivity`
 - `executionMode` with `real`, `real_with_mock_fallback`, or `mock_fallback_used`
 - `policyReasons` as an ordered list of human-readable reasons
-- `reviewVerdict` with `approve`, `needs_revision`, or `reject`
+- `reviewVerdict` with `pending`, `approved`, `needs_revision`, or `rejected`
 - `allowedActions` as the current human actions allowed on the task
 - `revisionCount`
 

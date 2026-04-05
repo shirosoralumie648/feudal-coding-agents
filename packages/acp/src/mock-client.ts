@@ -54,6 +54,33 @@ function artifact(kind: string, content: unknown): ACPArtifact {
   };
 }
 
+function joinedContent(messages: ACPMessage[]): string {
+  return messages.map((message) => message.content).join("\n");
+}
+
+function reviewVerdictFromMessages(
+  messages: ACPMessage[]
+): "approve" | "needs_revision" | "reject" {
+  const content = joinedContent(messages);
+
+  if (content.includes("#mock:reject")) {
+    return "reject";
+  }
+
+  if (/#mock:needs_revision(?!-once)\b/.test(content)) {
+    return "needs_revision";
+  }
+
+  if (
+    content.includes("#mock:needs_revision-once") &&
+    !content.includes("Revision note:")
+  ) {
+    return "needs_revision";
+  }
+
+  return "approve";
+}
+
 function runAgent(agent: string, messages: ACPMessage[]): ACPRun {
   const id = crypto.randomUUID();
 
@@ -86,6 +113,14 @@ function runAgent(agent: string, messages: ACPMessage[]): ACPRun {
   }
 
   if (agent === "auditor-agent" || agent === "critic-agent") {
+    const verdict = reviewVerdictFromMessages(messages);
+    const note =
+      verdict === "approve"
+        ? `${agent} found no blocking issues in the task plan.`
+        : verdict === "reject"
+          ? `${agent} rejected the task plan.`
+          : `${agent} requested revision before execution.`;
+
     return {
       id,
       agent,
@@ -93,9 +128,9 @@ function runAgent(agent: string, messages: ACPMessage[]): ACPRun {
       messages,
       artifacts: [
         artifact("review", {
-          verdict: "approve",
+          verdict,
           reviewer: agent,
-          note: `${agent} found no blocking issues in the Phase 1 skeleton.`
+          note
         })
       ]
     };
@@ -116,18 +151,22 @@ function runAgent(agent: string, messages: ACPMessage[]): ACPRun {
     };
   }
 
-  return {
-    id,
-    agent,
-    status: "completed",
-    messages,
-    artifacts: [
-      artifact("execution-report", {
-        result: "verified",
-        output: "Verifier accepted the execution report."
-      })
-    ]
-  };
+  if (agent === "xingbu-verifier") {
+    return {
+      id,
+      agent,
+      status: "completed",
+      messages,
+      artifacts: [
+        artifact("execution-report", {
+          result: "verified",
+          output: "Verifier accepted the execution report."
+        })
+      ]
+    };
+  }
+
+  throw new Error(`Unknown mock ACP agent: ${agent}`);
 }
 
 export function createMockACPClient(): ACPClient {

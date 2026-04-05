@@ -106,6 +106,14 @@ export async function rejectTask(taskId: string) {
   });
 }
 
+export async function reviseTask(taskId: string, note: string) {
+  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ note })
+  });
+}
+
 export async function fetchTaskEvents(taskId: string) {
   return requestJson<TaskEventSummary[]>(`/api/tasks/${taskId}/events`);
 }

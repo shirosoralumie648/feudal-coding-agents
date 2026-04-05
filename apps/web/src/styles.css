@@ -215,6 +215,11 @@ textarea {
   width: auto;
 }
 
+.field-note {
+  color: #7a5c00;
+  font-size: 0.9rem;
+}
+
 .task-form button,
 .detail-list button {
   padding: 12px 16px;
@@ -240,6 +245,11 @@ textarea {
   color: var(--muted);
 }
 
+.governance-list strong {
+  min-width: 9rem;
+  display: inline-block;
+}
+
 .task-summary-meta {
   display: flex;
   gap: 12px;
@@ -261,6 +271,32 @@ textarea {
 .approval-gate small {
   margin: 0;
   color: var(--muted);
+}
+
+.revision-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 253, 249, 0.92);
+  border: 1px solid rgba(161, 63, 43, 0.1);
+}
+
+.revision-panel p,
+.revision-panel label {
+  margin: 0;
+}
+
+.revision-panel textarea {
+  width: 100%;
+  min-height: 7rem;
+  margin-top: 8px;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .replay-snapshot {

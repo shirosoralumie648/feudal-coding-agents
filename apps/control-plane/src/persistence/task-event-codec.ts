@@ -7,7 +7,13 @@ import {
 import type { TaskProjectionRecord } from "./task-read-model";
 
 const CONTROL_PLANE_METADATA = { actorType: "control-plane" } as const;
-const TRACKED_DIFF_FIELDS = ["status", "approvalRequest", "runs"] as const;
+const TRACKED_DIFF_FIELDS = [
+  "status",
+  "approvalRequest",
+  "runs",
+  "governance",
+  "revisionRequest"
+] as const;
 
 type DiffField = (typeof TRACKED_DIFF_FIELDS)[number];
 

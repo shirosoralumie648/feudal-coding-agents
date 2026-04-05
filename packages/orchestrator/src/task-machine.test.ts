@@ -49,6 +49,14 @@ describe("transitionTask", () => {
     ).toBe("dispatching");
   });
 
+  it("routes review approval into awaiting approval", () => {
+    const reviewTask = { ...baseTask, status: "review" as const };
+
+    expect(transitionTask(reviewTask, { type: "review.approved" }).status).toBe(
+      "awaiting_approval"
+    );
+  });
+
   it("rejects illegal transitions", () => {
     expect(() =>
       transitionTask(baseTask, { type: "approval.granted" })

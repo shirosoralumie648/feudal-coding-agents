@@ -9,6 +9,7 @@ interface NewTaskPanelProps {
     field: "title" | "prompt" | "sensitivity",
     event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => void;
+  onAllowMockChange: (checked: boolean) => void;
   onRequiresApprovalChange: (checked: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
 }
@@ -19,6 +20,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
     draft,
     isSubmitting,
     onDraftChange,
+    onAllowMockChange,
     onRequiresApprovalChange,
     onSubmit
   } = props;
@@ -65,6 +67,15 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
           </label>
           <label className="checkbox-field">
             <input
+              checked={draft.allowMock}
+              type="checkbox"
+              name="allowMock"
+              onChange={(event) => onAllowMockChange(event.target.checked)}
+            />
+            Allow mock fallback
+          </label>
+          <label className="checkbox-field">
+            <input
               checked={draft.requiresApproval}
               type="checkbox"
               name="requiresApproval"
@@ -73,6 +84,11 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
             Require approval gate
           </label>
         </div>
+        {draft.sensitivity === "high" && !draft.requiresApproval ? (
+          <small className="field-note">
+            High sensitivity tasks always require approval.
+          </small>
+        ) : null}
         <button disabled={!canSubmit} type="submit">
           {isSubmitting ? "Submitting..." : "Submit task"}
         </button>

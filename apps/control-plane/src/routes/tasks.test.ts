@@ -8,10 +8,14 @@ import { registerAgentRoutes } from "./agents";
 import { buildTaskEventInputs } from "../persistence/task-event-codec";
 import { createTaskReadModel } from "../persistence/task-read-model";
 import { createOrchestratorService } from "../services/orchestrator-service";
+import { createTaskRunGateway } from "../services/task-run-gateway";
 
 function createApp() {
   const service = createOrchestratorService({
-    acpClient: createMockACPClient()
+    runGateway: createTaskRunGateway({
+      realClient: createMockACPClient(),
+      mockClient: createMockACPClient()
+    })
   });
   const app = Fastify();
   registerAgentRoutes(app, service);
@@ -20,7 +24,12 @@ function createApp() {
 }
 
 function createAppWithClient(acpClient: ACPClient) {
-  const service = createOrchestratorService({ acpClient });
+  const service = createOrchestratorService({
+    runGateway: createTaskRunGateway({
+      realClient: acpClient,
+      mockClient: createMockACPClient()
+    })
+  });
   const app = Fastify();
   registerAgentRoutes(app, service);
   registerTaskRoutes(app, service);
@@ -315,6 +324,66 @@ describe("control-plane routes", () => {
 
     expect(response.statusCode).toBe(404);
     expect(response.json()).toEqual({ message: "Task not found" });
+  });
+
+  it("accepts revision notes and returns the next governance branch", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Governance drill",
+        prompt: "Exercise the workflow #mock:needs_revision-once",
+        allowMock: true,
+        requiresApproval: false,
+        sensitivity: "high"
+      }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json().status).toBe("needs_revision");
+
+    const revised = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/revise`,
+      payload: {
+        note: "tighten rollback scope."
+      }
+    });
+
+    expect(revised.statusCode).toBe(200);
+    expect(revised.json().status).toBe("awaiting_approval");
+    expect(revised.json().governance.allowedActions).toEqual(["approve", "reject"]);
+  });
+
+  it("returns 409 for unsupported governance actions", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Fast path",
+        prompt: "Ship a low sensitivity task",
+        allowMock: false,
+        requiresApproval: false,
+        sensitivity: "low"
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/revise`,
+      payload: {
+        note: "No-op revision"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: `Task ${created.json().id} does not allow revise`
+    });
   });
 
   it("retries the executor once before completing the task", async () => {

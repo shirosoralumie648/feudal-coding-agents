@@ -7,6 +7,7 @@ import {
 } from "@feudal/persistence";
 import { createTaskReadModel } from "./persistence/task-read-model";
 import { createOrchestratorService } from "./services/orchestrator-service";
+import { createTaskRunGateway } from "./services/task-run-gateway";
 import { MemoryTaskStore, type TaskStore } from "./store";
 
 export function createACPClientFromEnv() {
@@ -18,6 +19,23 @@ export function createACPClientFromEnv() {
   }
 
   return createHttpACPClient({ baseUrl });
+}
+
+export function createTaskRunGatewayFromEnv() {
+  const mode = process.env.FEUDAL_ACP_MODE ?? "http";
+  const mockClient = createMockACPClient();
+
+  if (mode === "mock") {
+    return createTaskRunGateway({
+      realClient: mockClient,
+      mockClient
+    });
+  }
+
+  return createTaskRunGateway({
+    realClient: createACPClientFromEnv(),
+    mockClient
+  });
 }
 
 export async function createTaskStoreFromEnv() {
@@ -88,6 +106,6 @@ function createLazyTaskStore(
 }
 
 export const defaultOrchestratorService = createOrchestratorService({
-  acpClient: createACPClientFromEnv(),
+  runGateway: createTaskRunGatewayFromEnv(),
   store: createLazyTaskStore()
 });

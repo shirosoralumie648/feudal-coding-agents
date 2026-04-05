@@ -18,6 +18,7 @@ import {
   fetchTaskReplay,
   fetchTasks,
   rejectTask,
+  reviseTask,
   type CreateTaskInput,
   type RecoverySummary,
   type TaskConsoleRecord,
@@ -83,7 +84,8 @@ export function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string>();
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeApprovalId, setActiveApprovalId] = useState<string>();
+  const [activeGovernanceId, setActiveGovernanceId] = useState<string>();
+  const [revisionDrafts, setRevisionDrafts] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<CreateTaskInput>({
     title: "",
     prompt: "",
@@ -181,6 +183,13 @@ export function App() {
   const selectedTaskDiffs = selectedTask ? taskDiffs[selectedTask.id] ?? [] : [];
   const selectedReplayTask = selectedTask ? taskReplay[selectedTask.id] : undefined;
   const awaitingTasks = tasks.filter((task) => task.status === "awaiting_approval");
+  const governanceTasks = tasks.filter((task) => {
+    if (task.governance) {
+      return task.governance.allowedActions.length > 0;
+    }
+
+    return task.status === "awaiting_approval";
+  });
   const recoveryCount =
     recoverySummary.tasksNeedingRecovery + recoverySummary.runsNeedingRecovery;
   const recoveryLabel =
@@ -252,7 +261,7 @@ export function App() {
   }
 
   async function handleApprove(taskId: string) {
-    setActiveApprovalId(taskId);
+    setActiveGovernanceId(taskId);
 
     try {
       const approvedTask = await approveTask(taskId);
@@ -269,12 +278,12 @@ export function App() {
           : "Unable to approve the task."
       );
     } finally {
-      setActiveApprovalId(undefined);
+      setActiveGovernanceId(undefined);
     }
   }
 
   async function handleReject(taskId: string) {
-    setActiveApprovalId(taskId);
+    setActiveGovernanceId(taskId);
 
     try {
       const rejectedTask = await rejectTask(taskId);
@@ -291,7 +300,36 @@ export function App() {
           : "Unable to reject the task."
       );
     } finally {
-      setActiveApprovalId(undefined);
+      setActiveGovernanceId(undefined);
+    }
+  }
+
+  async function handleRevisionSubmit(taskId: string) {
+    const note = revisionDrafts[taskId]?.trim();
+
+    if (!note) {
+      return;
+    }
+
+    setActiveGovernanceId(taskId);
+
+    try {
+      const revisedTask = await reviseTask(taskId, note);
+
+      startTransition(() => {
+        upsertTask(revisedTask);
+        setSelectedTaskId(revisedTask.id);
+        setRevisionDrafts((current) => ({ ...current, [taskId]: "" }));
+        setError(undefined);
+      });
+    } catch (nextError: unknown) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Unable to submit the revision note."
+      );
+    } finally {
+      setActiveGovernanceId(undefined);
     }
   }
 
@@ -371,11 +409,29 @@ export function App() {
           isSubmitting={isSubmitting}
           onSubmit={handleTaskSubmit}
           onDraftChange={handleDraftChange}
+          onAllowMockChange={(checked) =>
+            setDraft((current) => ({ ...current, allowMock: checked }))
+          }
           onRequiresApprovalChange={(checked) =>
             setDraft((current) => ({ ...current, requiresApproval: checked }))
           }
         />
-        <TaskDetailPanel laneLabels={laneLabels} selectedTask={selectedTask} />
+        <TaskDetailPanel
+          laneLabels={laneLabels}
+          onRevisionNoteChange={(value) => {
+            if (!selectedTask) {
+              return;
+            }
+
+            setRevisionDrafts((current) => ({ ...current, [selectedTask.id]: value }));
+          }}
+          onSubmitRevision={() =>
+            selectedTask ? handleRevisionSubmit(selectedTask.id) : Promise.resolve()
+          }
+          revisionNote={selectedTask ? revisionDrafts[selectedTask.id] ?? "" : ""}
+          revisionPending={activeGovernanceId === selectedTask?.id}
+          selectedTask={selectedTask}
+        />
         <TimelinePanel
           events={selectedTaskEvents}
           onReplay={(eventId) =>
@@ -386,10 +442,10 @@ export function App() {
         />
         <DiffInspectorPanel diffs={selectedTaskDiffs} />
         <ApprovalInboxPanel
-          activeApprovalId={activeApprovalId}
+          activeTaskId={activeGovernanceId}
           onApprove={handleApprove}
           onReject={handleReject}
-          tasks={awaitingTasks}
+          tasks={governanceTasks}
         />
         <AgentRegistryPanel agents={agents} />
       </main>

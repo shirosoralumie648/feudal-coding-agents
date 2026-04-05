@@ -203,6 +203,60 @@ describe("task read model persistence projections", () => {
     ]);
   });
 
+  it("records revise operator actions and keeps governance data in rebuilt tasks", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "planning",
+        governance: {
+          requestedRequiresApproval: false,
+          effectiveRequiresApproval: true,
+          allowMock: true,
+          sensitivity: "high",
+          executionMode: "mock_fallback_used",
+          policyReasons: ["high sensitivity forced approval"],
+          reviewVerdict: "approved",
+          allowedActions: [],
+          revisionCount: 1
+        },
+        revisionRequest: undefined,
+        updatedAt: "2026-04-03T00:15:00.000Z"
+      },
+      "task.revision_submitted",
+      0
+    );
+
+    const actionRows = (
+      await pool.query(
+        `select action_type, status
+           from operator_actions
+          where task_id = $1`,
+        [task.id]
+      )
+    ).rows;
+
+    expect(actionRows).toContainEqual({
+      action_type: "revise",
+      status: "applied"
+    });
+
+    await pool.query("delete from tasks_current");
+    await pool.query("delete from task_history_entries");
+    await pool.query("delete from artifacts_current");
+    await pool.query("delete from projection_checkpoint");
+
+    await readModel.rebuildProjectionsIfNeeded();
+
+    await expect(readModel.getTask(task.id)).resolves.toMatchObject({
+      governance: {
+        executionMode: "mock_fallback_used",
+        revisionCount: 1
+      }
+    });
+  });
+
   it("lists task runs from runs_current and marks rebuilt in-flight tasks as recovery_required", async () => {
     const { pool, readModel } = await createReadModel();
 

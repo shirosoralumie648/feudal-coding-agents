@@ -138,6 +138,8 @@ async function appendOperatorAction(options: {
       ? "approve"
       : options.eventType === "task.rejected"
         ? "reject"
+        : options.eventType === "task.revision_submitted"
+          ? "revise"
         : undefined;
 
   if (!actionType) {

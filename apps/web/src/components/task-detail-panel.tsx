@@ -1,4 +1,6 @@
 import type { TaskRecord, TaskStatus } from "@feudal/contracts";
+import { GovernancePanel } from "./governance-panel";
+import { RevisionPanel } from "./revision-panel";
 
 function formatArtifact(content: unknown): string {
   if (typeof content === "string") {
@@ -16,11 +18,22 @@ function formatArtifact(content: unknown): string {
 
 interface TaskDetailPanelProps {
   laneLabels: Record<TaskStatus, string>;
+  onRevisionNoteChange: (value: string) => void;
+  onSubmitRevision: () => void | Promise<void>;
+  revisionNote: string;
+  revisionPending: boolean;
   selectedTask: TaskRecord | null;
 }
 
 export function TaskDetailPanel(props: TaskDetailPanelProps) {
-  const { laneLabels, selectedTask } = props;
+  const {
+    laneLabels,
+    onRevisionNoteChange,
+    onSubmitRevision,
+    revisionNote,
+    revisionPending,
+    selectedTask
+  } = props;
 
   return (
     <section className="panel panel-detail">
@@ -64,6 +77,18 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
               <small>{selectedTask.approvalRequest.actions.join(" / ")}</small>
             </article>
           ) : null}
+
+          <GovernancePanel task={selectedTask} />
+          <RevisionPanel
+            isSubmitting={revisionPending}
+            note={revisionNote}
+            onNoteChange={onRevisionNoteChange}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onSubmitRevision();
+            }}
+            task={selectedTask}
+          />
 
           <article>
             <h3>Artifacts</h3>

@@ -49,6 +49,17 @@ const defaultTask: TaskRecord = {
     prompt: "Approve the decision brief?",
     actions: ["approve", "reject"]
   },
+  governance: {
+    requestedRequiresApproval: true,
+    effectiveRequiresApproval: true,
+    allowMock: false,
+    sensitivity: "medium",
+    executionMode: "real",
+    policyReasons: [],
+    reviewVerdict: "approved",
+    allowedActions: ["approve", "reject"],
+    revisionCount: 0
+  },
   createdAt: "2026-04-02T14:00:00.000Z",
   updatedAt: "2026-04-02T14:00:00.000Z"
 };
@@ -77,6 +88,7 @@ function mockConsoleApi(options?: {
   createdTask?: TaskRecord;
   approvedTask?: TaskRecord;
   rejectedTask?: TaskRecord;
+  revisedTask?: TaskRecord;
   recoverySummary?: {
     tasksNeedingRecovery: number;
     runsNeedingRecovery: number;
@@ -210,6 +222,12 @@ function mockConsoleApi(options?: {
       return json(rejectedTask);
     }
 
+    if (url.endsWith(`/api/tasks/${defaultTask.id}/revise`) && method === "POST") {
+      const revisedTask = options?.revisedTask ?? defaultTask;
+      tasks = tasks.map((task) => (task.id === revisedTask.id ? revisedTask : task));
+      return json(revisedTask);
+    }
+
     throw new Error(`Unexpected fetch for ${method} ${url}`);
   });
 
@@ -234,7 +252,7 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Overview" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "New Task" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Task Detail" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Approval Inbox" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Governance Inbox" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Agent Registry" })).toBeVisible();
 
     expect(
@@ -424,5 +442,106 @@ describe("App", () => {
     expect(screen.getByText("task.approval_requested")).toBeVisible();
     expect(screen.getByText("/approvalRequest/prompt")).toBeVisible();
     expect(screen.getByRole("button", { name: "Replay Build dashboard" })).toBeVisible();
+  });
+
+  it("shows governance details and the forced approval warning", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "needs_revision",
+          approvalRunId: undefined,
+          approvalRequest: undefined,
+          governance: {
+            requestedRequiresApproval: false,
+            effectiveRequiresApproval: true,
+            allowMock: true,
+            sensitivity: "high",
+            executionMode: "mock_fallback_used",
+            policyReasons: ["high sensitivity forced approval"],
+            reviewVerdict: "needs_revision",
+            allowedActions: ["revise"],
+            revisionCount: 0
+          },
+          revisionRequest: {
+            note: "Clarify rollback expectations.",
+            reviewerReasons: ["critic-agent requested tighter rollback language"],
+            createdAt: "2026-04-04T00:00:00.000Z"
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Governance Inbox" })).toBeVisible();
+    expect(await screen.findByText("high sensitivity forced approval")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Sensitivity"), {
+      target: { value: "high" }
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Require approval gate" }));
+
+    expect(
+      screen.getByText("High sensitivity tasks always require approval.")
+    ).toBeVisible();
+  });
+
+  it("submits revision notes from task detail", async () => {
+    const revisedTask: TaskRecord = {
+      ...defaultTask,
+      status: "awaiting_approval",
+      governance: {
+        ...defaultTask.governance,
+        reviewVerdict: "approved",
+        allowedActions: ["approve", "reject"],
+        revisionCount: 1
+      },
+      revisionRequest: undefined,
+      approvalRunId: "await-1",
+      approvalRequest: {
+        runId: "await-1",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      }
+    };
+    const fetchMock = mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "needs_revision",
+          approvalRunId: undefined,
+          approvalRequest: undefined,
+          governance: {
+            ...defaultTask.governance,
+            reviewVerdict: "needs_revision",
+            allowedActions: ["revise"]
+          },
+          revisionRequest: {
+            note: "Clarify rollback expectations.",
+            reviewerReasons: ["critic-agent requested tighter rollback language"],
+            createdAt: "2026-04-04T00:00:00.000Z"
+          }
+        }
+      ],
+      revisedTask
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Revision note"), {
+      target: {
+        value: "Revision note: tighten rollback scope."
+      }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit revision" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/tasks/${defaultTask.id}/revise`,
+        expect.objectContaining({ method: "POST" })
+      )
+    );
+    expect(await screen.findByText("Approve the decision brief?")).toBeVisible();
   });
 });

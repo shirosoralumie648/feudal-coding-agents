@@ -152,4 +152,39 @@ describe("task event codec", () => {
       changedPaths: ["/status", "/approvalRequest", "/runs"]
     });
   });
+
+  it("tracks governance and revision diffs alongside approval metadata", () => {
+    const task = buildTaskRecord({
+      status: "needs_revision",
+      governance: {
+        requestedRequiresApproval: false,
+        effectiveRequiresApproval: true,
+        allowMock: true,
+        sensitivity: "high",
+        executionMode: "mock_fallback_used",
+        policyReasons: ["high sensitivity forced approval"],
+        reviewVerdict: "needs_revision",
+        allowedActions: ["revise"],
+        revisionCount: 1
+      },
+      revisionRequest: {
+        note: "Clarify rollback expectations.",
+        reviewerReasons: ["critic-agent requested tighter rollback language"],
+        createdAt: "2026-04-04T00:00:00.000Z"
+      }
+    });
+
+    const [, diffEvent] = buildTaskEventInputs(
+      task,
+      "task.review_revision_requested"
+    );
+
+    expect(diffEvent.payloadJson).toMatchObject({
+      changedPaths: expect.arrayContaining([
+        "/status",
+        "/governance",
+        "/revisionRequest"
+      ])
+    });
+  });
 });
