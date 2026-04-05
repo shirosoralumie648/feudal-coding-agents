@@ -1,6 +1,9 @@
 import type {
   ACPRunSummary,
   AuditEvent,
+  OperatorActionRecord,
+  OperatorActionSummary,
+  OperatorActionType,
   TaskArtifact,
   TaskRecord
 } from "@feudal/contracts";
@@ -24,6 +27,41 @@ export interface TaskStore {
     eventType: string,
     expectedVersion: number
   ): Promise<TaskProjectionRecord>;
+  recordOperatorAction(
+    input:
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "requested";
+          note: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "applied";
+          note: string;
+          appliedAt: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "rejected";
+          note: string;
+          rejectedAt: string;
+          rejectionReason: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+  ): Promise<void>;
+  listOperatorActions(taskId: string): Promise<OperatorActionRecord[] | undefined>;
+  getOperatorActionSummary(): Promise<OperatorActionSummary>;
   listTaskEvents(taskId: string): Promise<AuditEvent[] | undefined>;
   listTaskDiffs(taskId: string): Promise<AuditEvent[] | undefined>;
   listTaskRuns(taskId: string): Promise<ACPRunSummary[] | undefined>;
@@ -42,7 +80,9 @@ export interface TaskStore {
 export class MemoryTaskStore implements TaskStore {
   private readonly tasks = new Map<string, TaskProjectionRecord>();
   private readonly events = new Map<string, AuditEvent[]>();
+  private readonly operatorActions = new Map<string, OperatorActionRecord[]>();
   private nextEventId = 1;
+  private nextOperatorActionId = 1;
 
   async listTasks() {
     return [...this.tasks.values()];
@@ -85,6 +125,99 @@ export class MemoryTaskStore implements TaskStore {
     this.tasks.set(task.id, projection);
 
     return projection;
+  }
+
+  async recordOperatorAction(
+    input:
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "requested";
+          note: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "applied";
+          note: string;
+          appliedAt: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "rejected";
+          note: string;
+          rejectedAt: string;
+          rejectionReason: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+  ) {
+    const current = this.operatorActions.get(input.taskId) ?? [];
+    const createdAt = new Date().toISOString();
+    const baseRecord = {
+      id: this.nextOperatorActionId++,
+      taskId: input.taskId,
+      actionType: input.actionType,
+      note: input.note,
+      actorType: input.actorType ?? "operator",
+      actorId: input.actorId,
+      createdAt
+    };
+    let record: OperatorActionRecord;
+
+    if (input.status === "requested") {
+      record = {
+        ...baseRecord,
+        status: input.status
+      };
+    } else if (input.status === "applied") {
+      record = {
+        ...baseRecord,
+        status: input.status,
+        appliedAt: input.appliedAt
+      };
+    } else {
+      record = {
+        ...baseRecord,
+        status: input.status,
+        rejectedAt: input.rejectedAt,
+        rejectionReason: input.rejectionReason
+      };
+    }
+
+    this.operatorActions.set(input.taskId, [...current, record]);
+  }
+
+  async listOperatorActions(taskId: string) {
+    if (!this.tasks.has(taskId)) {
+      return undefined;
+    }
+
+    return [...(this.operatorActions.get(taskId) ?? [])];
+  }
+
+  async getOperatorActionSummary() {
+    const tasks = [...this.tasks.values()].filter((task) => task.operatorAllowedActions.length > 0);
+
+    return {
+      tasksNeedingOperatorAttention: tasks.length,
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        recoveryState: task.recoveryState,
+        recoveryReason: task.recoveryReason,
+        operatorAllowedActions: task.operatorAllowedActions
+      }))
+    };
   }
 
   async listTaskEvents(taskId: string) {

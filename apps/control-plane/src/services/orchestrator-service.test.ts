@@ -304,3 +304,118 @@ describe("orchestrator service durability", () => {
     );
   });
 });
+
+describe("orchestrator service operator actions", () => {
+  it("recovers a failed task and records requested/applied operator history", async () => {
+    const store = new MemoryTaskStore();
+    const failingClient: ACPClient = {
+      ...createMockACPClient(),
+      async runAgent(input) {
+        if (input.agent === "gongbu-executor") {
+          throw new Error("executor unavailable");
+        }
+
+        return createMockACPClient().runAgent(input);
+      }
+    };
+    const failingService = createServiceWithGateway({
+      realClient: failingClient,
+      store
+    });
+
+    const failed = await failingService.createTask({
+      id: "task-recover",
+      title: "Recover executor",
+      prompt: "Retry execution",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(failed.status).toBe("failed");
+
+    const recovered = await createServiceWithGateway({ store }).recoverTask(
+      failed.id,
+      "Retry after restoring the executor."
+    );
+
+    expect(recovered.status).toBe("completed");
+    await expect(store.listOperatorActions(failed.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" }),
+      expect.objectContaining({ actionType: "recover", status: "applied" })
+    ]);
+  });
+
+  it("takes over an awaiting approval task and re-enters planning with a note", async () => {
+    const store = new MemoryTaskStore();
+    const service = createServiceWithGateway({ store });
+
+    const created = await service.createTask({
+      id: "task-takeover",
+      title: "Take over task",
+      prompt: "Re-plan this task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    expect(created.status).toBe("awaiting_approval");
+
+    const takenOver = await service.takeoverTask(
+      created.id,
+      "Add the operator note and re-run planning."
+    );
+
+    expect(takenOver.status).toBe("awaiting_approval");
+    expect(
+      takenOver.history.some((entry) =>
+        entry.note.includes("task.operator_takeover_submitted")
+      )
+    ).toBe(true);
+    expect(takenOver.approvalRequest).toBeDefined();
+  });
+
+  it("abandons an in-flight task and clears approval state", async () => {
+    const service = createServiceWithGateway();
+    const created = await service.createTask({
+      id: "task-abandon",
+      title: "Abandon task",
+      prompt: "Stop this task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const abandoned = await service.abandonTask(
+      created.id,
+      "Operator chose to stop this task."
+    );
+
+    expect(abandoned.status).toBe("abandoned");
+    expect(abandoned.approvalRequest).toBeUndefined();
+    expect(abandoned.operatorAllowedActions).toEqual([]);
+  });
+
+  it("records rejected operator history when an action is not allowed", async () => {
+    const store = new MemoryTaskStore();
+    const service = createServiceWithGateway({ store });
+    const created = await service.createTask({
+      id: "task-reject-operator",
+      title: "Reject operator action",
+      prompt: "Finish this task",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(created.status).toBe("completed");
+
+    await expect(
+      service.recoverTask(created.id, "Retry a task that has already completed.")
+    ).rejects.toThrow();
+    await expect(store.listOperatorActions(created.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" }),
+      expect.objectContaining({ actionType: "recover", status: "rejected" })
+    ]);
+  });
+});
