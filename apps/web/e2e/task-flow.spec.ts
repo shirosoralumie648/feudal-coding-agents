@@ -19,7 +19,7 @@ test("drives one governance revision loop through approval and completion", asyn
 
   await expect(page.getByRole("heading", { name: "Governance Inbox" })).toBeVisible();
   await expect(page.locator(".panel-detail .panel-header span")).toHaveText("Needs Revision");
-  await expect(page.getByText("high sensitivity forced approval")).toBeVisible();
+  await expect(page.locator(".panel-detail").getByText("high sensitivity forced approval")).toBeVisible();
 
   await page
     .getByLabel("Revision note")
@@ -33,5 +33,5 @@ test("drives one governance revision loop through approval and completion", asyn
   await expect(page.locator(".governance-list")).toContainText("approved");
   await expect(page.locator(".governance-list")).toContainText("1");
   await expect(page.getByText("Verifier accepted the execution report.")).toBeVisible();
-  await expect(page.getByText("0 waiting")).toBeVisible();
+  await expect(page.locator(".panel-approval .panel-header span")).toHaveText("0 waiting");
 });
