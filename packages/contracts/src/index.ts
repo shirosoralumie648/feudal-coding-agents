@@ -25,9 +25,10 @@ export const OperatorActionStatusSchema = z.enum([
   "applied",
   "rejected"
 ]);
+const OperatorActionNoteSchema = z.string().trim().min(1);
 export const OperatorActionRequestSchema = z.object({
   actionType: OperatorActionTypeSchema,
-  note: z.string().min(1),
+  note: OperatorActionNoteSchema,
   confirm: z.boolean().optional()
 });
 export const RecoveryStateSchema = z.enum([
@@ -87,19 +88,30 @@ export const TaskHistoryEntrySchema = z.object({
   note: z.string()
 });
 
-export const OperatorActionRecordSchema = z.object({
+const OperatorActionRecordBaseSchema = z.object({
   id: z.number().int().nonnegative(),
   taskId: z.string(),
   actionType: OperatorActionTypeSchema,
-  status: OperatorActionStatusSchema,
-  note: z.string().min(1),
+  note: OperatorActionNoteSchema,
   actorType: z.string(),
   actorId: z.string().optional(),
-  appliedAt: z.string().optional(),
-  rejectedAt: z.string().optional(),
-  rejectionReason: z.string().optional(),
-  createdAt: z.string(),
+  createdAt: z.string()
 });
+
+export const OperatorActionRecordSchema = z.discriminatedUnion("status", [
+  OperatorActionRecordBaseSchema.extend({
+    status: z.literal("requested")
+  }),
+  OperatorActionRecordBaseSchema.extend({
+    status: z.literal("applied"),
+    appliedAt: z.string()
+  }),
+  OperatorActionRecordBaseSchema.extend({
+    status: z.literal("rejected"),
+    rejectedAt: z.string(),
+    rejectionReason: z.string()
+  })
+]);
 
 export const OperatorActionSummarySchema = z.object({
   tasksNeedingOperatorAttention: z.number().int().nonnegative(),

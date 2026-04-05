@@ -202,6 +202,16 @@ describe("contracts", () => {
   });
 
   it("accepts operator action history records", () => {
+    const requestedResult = OperatorActionRecordSchema.parse({
+      id: 0,
+      taskId: "task-4",
+      actionType: "takeover",
+      status: "requested",
+      note: "Operator is taking over recovery handling",
+      actorType: "operator",
+      actorId: "operator-2",
+      createdAt: "2026-04-04T00:00:00.000Z"
+    });
     const appliedResult = OperatorActionRecordSchema.parse({
       id: 1,
       taskId: "task-5",
@@ -225,6 +235,7 @@ describe("contracts", () => {
       rejectionReason: "active approval review in progress"
     });
 
+    expect(requestedResult.status).toBe("requested");
     expect(appliedResult.id).toBe(1);
     expect(appliedResult.actionType).toBe("recover");
     expect(appliedResult.appliedAt).toBe("2026-04-04T00:00:10.000Z");
@@ -243,6 +254,73 @@ describe("contracts", () => {
 
     expect(result.actionType).toBe("abandon");
     expect(result.confirm).toBe(true);
+  });
+
+  it("rejects operator action request payloads with whitespace-only notes", () => {
+    const result = OperatorActionRequestSchema.safeParse({
+      actionType: "recover",
+      note: "   "
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects operator action history records with whitespace-only notes", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 3,
+      taskId: "task-7",
+      actionType: "recover",
+      status: "requested",
+      note: "   ",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects applied operator action records without appliedAt", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 4,
+      taskId: "task-8",
+      actionType: "recover",
+      status: "applied",
+      note: "Recovered execution after restart",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects rejected operator action records without rejectedAt", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 5,
+      taskId: "task-9",
+      actionType: "abandon",
+      status: "rejected",
+      note: "Abandon request blocked",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      rejectionReason: "task already completed"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects rejected operator action records without rejectionReason", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 6,
+      taskId: "task-10",
+      actionType: "abandon",
+      status: "rejected",
+      note: "Abandon request blocked",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      rejectedAt: "2026-04-04T00:00:10.000Z"
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("accepts operator action summary payloads", () => {

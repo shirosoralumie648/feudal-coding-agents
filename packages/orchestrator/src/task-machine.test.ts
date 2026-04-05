@@ -11,6 +11,7 @@ const baseTask: TaskRecord = {
   history: [],
   runIds: [],
   runs: [],
+  operatorAllowedActions: [],
   governance: {
     requestedRequiresApproval: true,
     effectiveRequiresApproval: true,
@@ -103,27 +104,36 @@ describe("transitionTask", () => {
     ).toBe("planning");
   });
 
-  it("routes takeover submissions from executing to planning", () => {
-    const executingTask = { ...baseTask, status: "executing" as const };
-
+  it.each([
+    "intake",
+    "planning",
+    "review",
+    "dispatching",
+    "awaiting_approval",
+    "executing",
+    "verifying",
+    "failed",
+    "needs_revision"
+  ] as const)("routes takeover submissions from %s to planning", (status) => {
     expect(
-      transitionTask(executingTask, { type: "operator.takeover_submitted" }).status
+      transitionTask({ ...baseTask, status }, { type: "operator.takeover_submitted" })
+        .status
     ).toBe("planning");
   });
 
-  it("routes takeover submissions from needs revision to planning", () => {
-    const needsRevisionTask = { ...baseTask, status: "needs_revision" as const };
-
+  it.each([
+    "intake",
+    "planning",
+    "review",
+    "awaiting_approval",
+    "dispatching",
+    "executing",
+    "verifying",
+    "failed",
+    "needs_revision"
+  ] as const)("routes abandon requests from %s to abandoned", (status) => {
     expect(
-      transitionTask(needsRevisionTask, { type: "operator.takeover_submitted" }).status
-    ).toBe("planning");
-  });
-
-  it("routes abandon requests from needs revision to abandoned", () => {
-    const needsRevisionTask = { ...baseTask, status: "needs_revision" as const };
-
-    expect(
-      transitionTask(needsRevisionTask, { type: "operator.abandoned" }).status
+      transitionTask({ ...baseTask, status }, { type: "operator.abandoned" }).status
     ).toBe("abandoned");
   });
 });
