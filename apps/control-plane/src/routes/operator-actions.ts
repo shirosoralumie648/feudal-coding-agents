@@ -2,10 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { defaultOrchestratorService } from "../config";
 import { OperatorActionNotAllowedError } from "../operator-actions/policy";
-import {
-  ActionNotAllowedError,
-  type OrchestratorService
-} from "../services/orchestrator-service";
+import type { OrchestratorService } from "../services/orchestrator-service";
 
 const TaskParamsSchema = z.object({
   taskId: z.string()
@@ -56,10 +53,7 @@ async function sendOperatorResult(
   try {
     return await work();
   } catch (error) {
-    if (
-      error instanceof ActionNotAllowedError ||
-      error instanceof OperatorActionNotAllowedError
-    ) {
+    if (error instanceof OperatorActionNotAllowedError) {
       return reply.code(409).send({ message: error.message });
     }
 
