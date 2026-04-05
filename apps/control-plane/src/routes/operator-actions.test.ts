@@ -93,6 +93,44 @@ describe("operator action routes", () => {
     expect(response.json()).toEqual({ message: "Task not found" });
   });
 
+  it("returns 404 when listing operator history for an unknown task", async () => {
+    const app = createApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/tasks/missing-task/operator-actions"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ message: "Task not found" });
+  });
+
+  it("returns 409 when an operator action is not allowed", async () => {
+    const app = createApp();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Disallowed recover task",
+        prompt: "Create a task that has not failed yet",
+        allowMock: false,
+        requiresApproval: true,
+        sensitivity: "medium"
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/operator-actions/recover`,
+      payload: { note: "Retry execution now." }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: expect.stringContaining("does not allow operator action recover")
+    });
+  });
+
   it("returns operator summary for recovery attention", async () => {
     const app = createApp();
     const response = await app.inject({
