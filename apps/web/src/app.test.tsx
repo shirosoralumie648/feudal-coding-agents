@@ -92,6 +92,7 @@ function mockConsoleApi(options?: {
   operatorActions?: OperatorActionRecord[];
   operatorSummary?: OperatorActionSummary;
   takenOverTask?: TaskRecord;
+  takenOverResponse?: Promise<Response>;
   recoveredTask?: TaskRecord;
   abandonedTask?: TaskRecord;
   recoverySummary?: {
@@ -116,6 +117,16 @@ function mockConsoleApi(options?: {
     const taskEventMatch = url.match(/\/api\/tasks\/([^/]+)\/events$/);
     const taskDiffMatch = url.match(/\/api\/tasks\/([^/]+)\/diffs$/);
     const taskReplayMatch = url.match(/\/api\/tasks\/([^/]+)\/replay/);
+    const taskOperatorActionsMatch = url.match(/\/api\/tasks\/([^/]+)\/operator-actions$/);
+    const taskTakeoverMatch = url.match(
+      /\/api\/tasks\/([^/]+)\/operator-actions\/takeover$/
+    );
+    const taskRecoverMatch = url.match(
+      /\/api\/tasks\/([^/]+)\/operator-actions\/recover$/
+    );
+    const taskAbandonMatch = url.match(
+      /\/api\/tasks\/([^/]+)\/operator-actions\/abandon$/
+    );
 
     if (url.endsWith("/api/tasks") && method === "GET") {
       return options?.tasksResponse ?? json(tasks);
@@ -134,7 +145,7 @@ function mockConsoleApi(options?: {
       );
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/operator-actions`) && method === "GET") {
+    if (taskOperatorActionsMatch && method === "GET") {
       return json(options?.operatorActions ?? []);
     }
 
@@ -246,22 +257,26 @@ function mockConsoleApi(options?: {
       return json(revisedTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/operator-actions/takeover`) && method === "POST") {
+    if (taskTakeoverMatch && method === "POST") {
+      const taskId = taskTakeoverMatch[1];
+      const currentTask = tasks.find((task) => task.id === taskId) ?? defaultTask;
       const takenOverTask =
         options?.takenOverTask ??
         ({
-          ...defaultTask,
+          ...currentTask,
           operatorAllowedActions: ["takeover", "abandon"]
         } satisfies TaskRecord);
       tasks = tasks.map((task) => (task.id === takenOverTask.id ? takenOverTask : task));
-      return json(takenOverTask);
+      return options?.takenOverResponse ?? json(takenOverTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/operator-actions/recover`) && method === "POST") {
+    if (taskRecoverMatch && method === "POST") {
+      const taskId = taskRecoverMatch[1];
+      const currentTask = tasks.find((task) => task.id === taskId) ?? defaultTask;
       const recoveredTask =
         options?.recoveredTask ??
         ({
-          ...defaultTask,
+          ...currentTask,
           status: "completed",
           operatorAllowedActions: []
         } satisfies TaskRecord);
@@ -269,11 +284,13 @@ function mockConsoleApi(options?: {
       return json(recoveredTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/operator-actions/abandon`) && method === "POST") {
+    if (taskAbandonMatch && method === "POST") {
+      const taskId = taskAbandonMatch[1];
+      const currentTask = tasks.find((task) => task.id === taskId) ?? defaultTask;
       const abandonedTask =
         options?.abandonedTask ??
         ({
-          ...defaultTask,
+          ...currentTask,
           status: "abandoned",
           operatorAllowedActions: [],
           approvalRequest: undefined,
@@ -623,7 +640,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Operator Queue" })).toBeVisible();
-    expect(screen.getByText("recover / takeover / abandon")).toBeVisible();
+    expect(await screen.findByText("recover / takeover / abandon")).toBeVisible();
   });
 
   it("submits an operator takeover note from task detail", async () => {
@@ -742,5 +759,78 @@ describe("App", () => {
 
     fireEvent.change(noteField, { target: { value: "Re-plan with a tighter scope." } });
     expect(takeoverButton).toBeEnabled();
+  });
+
+  it("keeps the current task selected while an operator action is pending", async () => {
+    const secondTask: TaskRecord = {
+      ...defaultTask,
+      id: "task-2",
+      title: "Recover runner",
+      status: "failed",
+      approvalRunId: undefined,
+      approvalRequest: undefined,
+      operatorAllowedActions: ["recover", "takeover", "abandon"]
+    };
+    const takeoverResponse = deferred<Response>();
+
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover"]
+        },
+        secondTask
+      ],
+      operatorSummary: {
+        tasksNeedingOperatorAttention: 2,
+        tasks: [
+          {
+            id: defaultTask.id,
+            title: defaultTask.title,
+            status: "awaiting_approval",
+            recoveryState: "healthy",
+            operatorAllowedActions: ["takeover"]
+          },
+          {
+            id: secondTask.id,
+            title: secondTask.title,
+            status: "failed",
+            recoveryState: "healthy",
+            operatorAllowedActions: ["recover", "takeover", "abandon"]
+          }
+        ]
+      },
+      takenOverResponse: takeoverResponse.promise
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Operator note"), {
+      target: { value: "Re-plan this task." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Open task" }))[1]!);
+
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: defaultTask.title
+      })
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", {
+        level: 3,
+        name: secondTask.title
+      })
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      takeoverResponse.resolve(
+        await json({
+          ...defaultTask,
+          operatorAllowedActions: ["takeover", "abandon"]
+        })
+      );
+    });
   });
 });

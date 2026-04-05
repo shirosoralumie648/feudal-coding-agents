@@ -59,6 +59,7 @@ const laneLabels: Record<TaskStatus, string> = {
   executing: "Executing",
   verifying: "Verifying",
   completed: "Completed",
+  abandoned: "Abandoned",
   needs_revision: "Needs Revision",
   partial_success: "Partial Success",
   rejected: "Rejected",
@@ -524,7 +525,13 @@ export function App() {
         />
         <OperatorQueuePanel
           activeTaskId={selectedTask?.id}
-          onSelectTask={(taskId) => setSelectedTaskId(taskId)}
+          onSelectTask={(taskId) => {
+            if (activeOperatorAction) {
+              return;
+            }
+
+            setSelectedTaskId(taskId);
+          }}
           summary={operatorSummary}
         />
         <TaskDetailPanel
