@@ -350,7 +350,10 @@ export function createOrchestratorService(options: {
     });
 
     try {
-      assertOperatorActionAllowed(current, actionType);
+      assertOperatorActionAllowed(
+        syncOperatorActions(current, current.recoveryState),
+        actionType
+      );
     } catch (error) {
       await store.recordOperatorAction({
         taskId: current.id,
@@ -796,6 +799,7 @@ export function createOrchestratorService(options: {
         approvalRequest: undefined
       };
 
+      const persisted = await persistTask(task, "task.operator_recovered");
       await store.recordOperatorAction({
         taskId,
         actionType: "recover",
@@ -804,10 +808,9 @@ export function createOrchestratorService(options: {
         appliedAt: new Date().toISOString(),
         payloadJson: { eventType: "task.operator_recovered" }
       });
-      await persistTask(task, "task.operator_recovered");
 
       return runExecutionAndVerification({
-        task,
+        task: persisted,
         persistTask,
         runMetadata: { taskId }
       });
@@ -841,6 +844,7 @@ export function createOrchestratorService(options: {
         revisionRequest: undefined
       };
 
+      const persisted = await persistTask(task, "task.operator_takeover_submitted");
       await store.recordOperatorAction({
         taskId,
         actionType: "takeover",
@@ -849,10 +853,9 @@ export function createOrchestratorService(options: {
         appliedAt: new Date().toISOString(),
         payloadJson: { eventType: "task.operator_takeover_submitted" }
       });
-      await persistTask(task, "task.operator_takeover_submitted");
 
       return runPlanningReviewAndBranch({
-        task,
+        task: persisted,
         persistTask,
         runMetadata: { taskId },
         revisionNote: note
@@ -884,6 +887,7 @@ export function createOrchestratorService(options: {
         revisionRequest: undefined
       };
 
+      const persisted = await persistTask(task, "task.operator_abandoned");
       await store.recordOperatorAction({
         taskId,
         actionType: "abandon",
@@ -893,7 +897,7 @@ export function createOrchestratorService(options: {
         payloadJson: { eventType: "task.operator_abandoned" }
       });
 
-      return persistTask(task, "task.operator_abandoned");
+      return persisted;
     },
 
     async listTasks() {

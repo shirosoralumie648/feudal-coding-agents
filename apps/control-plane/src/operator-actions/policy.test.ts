@@ -21,6 +21,15 @@ describe("allowedOperatorActionsForTask", () => {
     ).toEqual(["takeover", "abandon"]);
   });
 
+  it("does not expose recover for recovery-required tasks outside execution flow", () => {
+    expect(
+      allowedOperatorActionsForTask({
+        status: "planning",
+        recoveryState: "recovery_required"
+      })
+    ).toEqual(["takeover", "abandon"]);
+  });
+
   it("returns no operator actions for completed work", () => {
     expect(
       allowedOperatorActionsForTask({

@@ -26,7 +26,13 @@ export function allowedOperatorActionsForTask(input: {
 }): OperatorActionType[] {
   const actions: OperatorActionType[] = [];
 
-  if (input.status === "failed" || input.recoveryState === "recovery_required") {
+  if (
+    input.status === "failed" ||
+    (input.recoveryState === "recovery_required" &&
+      (input.status === "dispatching" ||
+        input.status === "executing" ||
+        input.status === "verifying"))
+  ) {
     actions.push("recover");
   }
 

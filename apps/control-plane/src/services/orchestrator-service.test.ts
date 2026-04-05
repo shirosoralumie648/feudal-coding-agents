@@ -7,6 +7,7 @@ import type {
 import { createMockACPClient } from "@feudal/acp/mock-client";
 import { createTaskRunGateway } from "./task-run-gateway";
 import { createOrchestratorService } from "./orchestrator-service";
+import type { TaskProjectionRecord } from "../persistence/task-read-model";
 import { MemoryTaskStore } from "../store";
 
 class RecordingTaskStore extends MemoryTaskStore {
@@ -16,6 +17,48 @@ class RecordingTaskStore extends MemoryTaskStore {
 
   override async saveTask(task, eventType, expectedVersion) {
     this.eventLog.push(`save:${eventType}:${task.status}:${expectedVersion}`);
+    return super.saveTask(task, eventType, expectedVersion);
+  }
+}
+
+class StaleRecoveryTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-stale-recovery") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Stale recovery task",
+      prompt: "Resume the stale recovery task",
+      status: "executing",
+      artifacts: [],
+      history: [
+        {
+          status: "executing",
+          at: "2026-04-05T00:00:00.000Z",
+          note: "Recovered executing task requires operator review"
+        }
+      ],
+      runIds: [],
+      runs: [],
+      operatorAllowedActions: [],
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      recoveryState: "recovery_required",
+      recoveryReason: "Recovered executing task requires operator review",
+      latestEventId: 0,
+      latestProjectionVersion: 0
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class FailingRecoverPersistStore extends MemoryTaskStore {
+  override async saveTask(task, eventType, expectedVersion) {
+    if (eventType === "task.operator_recovered") {
+      throw new Error("simulated save failure");
+    }
+
     return super.saveTask(task, eventType, expectedVersion);
   }
 }
@@ -416,6 +459,59 @@ describe("orchestrator service operator actions", () => {
     await expect(store.listOperatorActions(created.id)).resolves.toEqual([
       expect.objectContaining({ actionType: "recover", status: "requested" }),
       expect.objectContaining({ actionType: "recover", status: "rejected" })
+    ]);
+  });
+
+  it("recomputes operator actions before validating recovery-required tasks", async () => {
+    const store = new StaleRecoveryTaskStore();
+    const service = createServiceWithGateway({ store });
+
+    const recovered = await service.recoverTask(
+      "task-stale-recovery",
+      "Resume execution after rebuild."
+    );
+
+    expect(recovered.status).toBe("completed");
+    await expect(store.listOperatorActions("task-stale-recovery")).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" }),
+      expect.objectContaining({ actionType: "recover", status: "applied" })
+    ]);
+  });
+
+  it("does not record applied operator history when persisting the recovery transition fails", async () => {
+    const store = new FailingRecoverPersistStore();
+    const failingClient: ACPClient = {
+      ...createMockACPClient(),
+      async runAgent(input) {
+        if (input.agent === "gongbu-executor") {
+          throw new Error("executor unavailable");
+        }
+
+        return createMockACPClient().runAgent(input);
+      }
+    };
+    const failingService = createServiceWithGateway({
+      realClient: failingClient,
+      store
+    });
+    const service = createServiceWithGateway({ store });
+
+    const failed = await failingService.createTask({
+      id: "task-persist-ordering",
+      title: "Persist ordering task",
+      prompt: "Fail then recover",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(failed.status).toBe("failed");
+
+    await expect(
+      service.recoverTask(failed.id, "Retry after fixing the persistence layer.")
+    ).rejects.toThrow("simulated save failure");
+    await expect(store.listOperatorActions(failed.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" })
     ]);
   });
 
