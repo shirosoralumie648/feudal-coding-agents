@@ -1,5 +1,9 @@
 import type { ACPAgentManifest } from "@feudal/acp";
-import type { TaskRecord } from "@feudal/contracts";
+import type {
+  OperatorActionRecord,
+  OperatorActionSummary,
+  TaskRecord
+} from "@feudal/contracts";
 
 export interface CreateTaskInput {
   title: string;
@@ -114,6 +118,30 @@ export async function reviseTask(taskId: string, note: string) {
   });
 }
 
+export async function recoverTask(taskId: string, note: string) {
+  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/operator-actions/recover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ note })
+  });
+}
+
+export async function takeoverTask(taskId: string, note: string) {
+  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/operator-actions/takeover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ note })
+  });
+}
+
+export async function abandonTask(taskId: string, note: string) {
+  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/operator-actions/abandon`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ note, confirm: true })
+  });
+}
+
 export async function fetchTaskEvents(taskId: string) {
   return requestJson<TaskEventSummary[]>(`/api/tasks/${taskId}/events`);
 }
@@ -127,6 +155,14 @@ export async function fetchTaskReplay(taskId: string, asOfEventId: number) {
   return requestJson<{ task: Pick<TaskRecord, "id" | "title" | "status"> }>(
     `/api/tasks/${taskId}/replay?asOfEventId=${asOfEventId}`
   );
+}
+
+export async function fetchTaskOperatorActions(taskId: string) {
+  return requestJson<OperatorActionRecord[]>(`/api/tasks/${taskId}/operator-actions`);
+}
+
+export async function fetchOperatorSummary() {
+  return requestJson<OperatorActionSummary>("/api/operator-actions/summary");
 }
 
 export async function fetchRecoverySummary() {
