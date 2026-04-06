@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { defaultOrchestratorService } from "./config";
 import { registerAgentRoutes } from "./routes/agents";
+import { registerOperatorActionRoutes } from "./routes/operator-actions";
 import { registerReplayRoutes } from "./routes/replay";
 import { registerTaskRoutes } from "./routes/tasks";
 import type { OrchestratorService } from "./services/orchestrator-service";
@@ -16,6 +17,7 @@ export function createControlPlaneApp(options?: {
 
   registerAgentRoutes(app, service);
   registerTaskRoutes(app, service);
+  registerOperatorActionRoutes(app, service);
   registerReplayRoutes(app, service);
 
   app.addHook("onReady", async () => {
