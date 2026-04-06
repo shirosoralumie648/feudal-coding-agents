@@ -71,8 +71,8 @@ function createLazyTaskStore(
       return (await getStore()).getTask(taskId);
     },
 
-    async saveTask(task, eventType, expectedVersion) {
-      return (await getStore()).saveTask(task, eventType, expectedVersion);
+    async saveTask(task, eventType, expectedVersion, options) {
+      return (await getStore()).saveTask(task, eventType, expectedVersion, options);
     },
 
     async listTaskEvents(taskId) {
@@ -89,6 +89,14 @@ function createLazyTaskStore(
 
     async listTaskArtifacts(taskId) {
       return (await getStore()).listTaskArtifacts(taskId);
+    },
+
+    async listOperatorActions(taskId) {
+      return (await getStore()).listOperatorActions(taskId);
+    },
+
+    async getOperatorActionSummary() {
+      return (await getStore()).getOperatorActionSummary();
     },
 
     async replayTaskAtEventId(taskId, eventId) {

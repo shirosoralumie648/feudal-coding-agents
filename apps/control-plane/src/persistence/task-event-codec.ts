@@ -1,6 +1,7 @@
 import {
   AuditEventSchema,
   TaskRecordSchema,
+  type RecoveryState,
   type AuditEvent,
   type TaskRecord
 } from "@feudal/contracts";
@@ -146,14 +147,17 @@ export function toAuditEvent(row: {
 
 export function toTaskProjectionRecord(input: {
   task: TaskRecord;
+  recoveryState?: RecoveryState;
+  recoveryReason?: string;
+  lastRecoveredAt?: string;
   latestEventId: number;
   latestProjectionVersion: number;
 }): TaskProjectionRecord {
   return {
     ...input.task,
-    recoveryState: "healthy",
-    recoveryReason: undefined,
-    lastRecoveredAt: input.task.updatedAt,
+    recoveryState: input.recoveryState ?? "healthy",
+    recoveryReason: input.recoveryReason,
+    lastRecoveredAt: input.lastRecoveredAt ?? input.task.updatedAt,
     latestEventId: input.latestEventId,
     latestProjectionVersion: input.latestProjectionVersion
   };

@@ -5,6 +5,7 @@ import type {
   ACPRunAgentInput
 } from "@feudal/acp";
 import { createMockACPClient } from "@feudal/acp/mock-client";
+import { TaskRecordSchema } from "@feudal/contracts";
 import { createTaskRunGateway } from "./task-run-gateway";
 import { createOrchestratorService } from "./orchestrator-service";
 import { MemoryTaskStore } from "../store";
@@ -50,6 +51,44 @@ function createServiceWithGateway(options?: {
       mockClient: createMockACPClient()
     }),
     store: options?.store
+  });
+}
+
+function buildStoredTask(
+  overrides: Partial<ReturnType<typeof TaskRecordSchema.parse>> = {}
+) {
+  return TaskRecordSchema.parse({
+    id: "task-operator-service",
+    title: "Recover executor",
+    prompt: "Retry the deployment",
+    status: "failed",
+    artifacts: [
+      {
+        id: "artifact-taskspec",
+        kind: "taskspec",
+        name: "taskspec.json",
+        mimeType: "application/json",
+        content: { prompt: "Retry the deployment" }
+      }
+    ],
+    history: [],
+    runIds: [],
+    runs: [],
+    operatorAllowedActions: ["recover", "takeover", "abandon"],
+    governance: {
+      requestedRequiresApproval: true,
+      effectiveRequiresApproval: true,
+      allowMock: false,
+      sensitivity: "medium",
+      executionMode: "real",
+      policyReasons: [],
+      reviewVerdict: "approved",
+      allowedActions: [],
+      revisionCount: 0
+    },
+    createdAt: "2026-04-06T00:00:00.000Z",
+    updatedAt: "2026-04-06T00:05:00.000Z",
+    ...overrides
   });
 }
 
@@ -302,5 +341,96 @@ describe("orchestrator service durability", () => {
     expect(events.some((event) => event.startsWith("save:task.rejected:rejected:"))).toBe(
       true
     );
+  });
+
+  it("recovers failed tasks and records applied recover actions", async () => {
+    const store = new MemoryTaskStore();
+    await store.saveTask(buildStoredTask(), "task.execution_failed", 0);
+
+    const service = createServiceWithGateway({ store });
+    const recovered = await service.recoverTask(
+      "task-operator-service",
+      "Executor restored; retry the run."
+    );
+
+    expect(recovered.status).toBe("completed");
+    await expect(store.listOperatorActions("task-operator-service")).resolves.toContainEqual(
+      expect.objectContaining({
+        actionType: "recover",
+        status: "applied",
+        note: "Executor restored; retry the run."
+      })
+    );
+  });
+
+  it("takes over awaiting approval tasks and re-enters planning with a fresh approval gate", async () => {
+    const store = new MemoryTaskStore();
+    await store.saveTask(
+      buildStoredTask({
+        status: "awaiting_approval",
+        approvalRunId: "run-approval-old",
+        approvalRequest: {
+          runId: "run-approval-old",
+          prompt: "Approve the decision brief?",
+          actions: ["approve", "reject"]
+        },
+        operatorAllowedActions: ["takeover", "abandon"]
+      }),
+      "task.awaiting_approval",
+      0
+    );
+
+    const service = createServiceWithGateway({ store });
+    const takenOver = await service.takeoverTask(
+      "task-operator-service",
+      "Re-plan around the new rollback constraints."
+    );
+
+    expect(takenOver.status).toBe("awaiting_approval");
+    expect(takenOver.approvalRunId).not.toBe("run-approval-old");
+    expect(takenOver.approvalRequest?.actions).toEqual(["approve", "reject"]);
+    expect(
+      takenOver.history.some((entry) => entry.note.includes("Operator takeover note"))
+    ).toBe(true);
+  });
+
+  it("abandons actionable tasks and clears follow-up actions", async () => {
+    const store = new MemoryTaskStore();
+    await store.saveTask(
+      buildStoredTask({
+        status: "review",
+        operatorAllowedActions: ["abandon"]
+      }),
+      "task.review_completed",
+      0
+    );
+
+    const service = createServiceWithGateway({ store });
+    const abandoned = await service.abandonTask(
+      "task-operator-service",
+      "Stop work on this branch.",
+      true
+    );
+
+    expect(abandoned.status).toBe("abandoned");
+    expect(abandoned.operatorAllowedActions).toEqual([]);
+  });
+
+  it("rejects operator actions that are not currently allowed", async () => {
+    const store = new MemoryTaskStore();
+    await store.saveTask(
+      buildStoredTask({
+        status: "completed",
+        operatorAllowedActions: []
+      }),
+      "task.completed",
+      0
+    );
+
+    const service = createServiceWithGateway({ store });
+
+    await expect(
+      service.recoverTask("task-operator-service", "Retry anyway")
+    ).rejects.toThrow("does not allow recover");
   });
 });
