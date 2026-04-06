@@ -14,10 +14,23 @@ export const TaskStatusSchema = z.enum([
   "partial_success",
   "rejected",
   "failed",
-  "rolled_back"
+  "rolled_back",
+  "abandoned"
 ]);
 
 export const TaskActionSchema = z.enum(["approve", "reject", "revise"]);
+
+export const OperatorActionTypeSchema = z.enum([
+  "recover",
+  "takeover",
+  "abandon"
+]);
+
+export const OperatorActionStatusSchema = z.enum([
+  "requested",
+  "applied",
+  "rejected"
+]);
 
 export const ReviewVerdictSchema = z.enum([
   "pending",
@@ -113,6 +126,25 @@ export const TaskApprovalRequestSchema = z.object({
   actions: z.array(z.string())
 });
 
+export const OperatorActionRequestSchema = z.object({
+  note: z.string().trim().min(1),
+  confirm: z.literal(true).optional()
+});
+
+export const OperatorActionRecordSchema = z.object({
+  id: z.number().int().nonnegative(),
+  taskId: z.string(),
+  actionType: OperatorActionTypeSchema,
+  status: OperatorActionStatusSchema,
+  note: z.string().min(1),
+  actorType: z.string(),
+  actorId: z.string().optional(),
+  createdAt: z.string(),
+  appliedAt: z.string().optional(),
+  rejectedAt: z.string().optional(),
+  rejectionReason: z.string().optional()
+});
+
 export const AuditEventSchema = z.object({
   id: z.number(),
   streamType: z.string(),
@@ -130,6 +162,20 @@ export const RecoveryStateSchema = z.enum([
   "recovery_required"
 ]);
 
+export const OperatorActionSummarySchema = z.object({
+  tasksNeedingOperatorAttention: z.number().int().nonnegative(),
+  tasks: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: TaskStatusSchema,
+      recoveryState: RecoveryStateSchema,
+      recoveryReason: z.string().optional(),
+      operatorAllowedActions: z.array(OperatorActionTypeSchema).default([])
+    })
+  )
+});
+
 export const TaskRecordSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -143,12 +189,15 @@ export const TaskRecordSchema = z.object({
   approvalRequest: TaskApprovalRequestSchema.optional(),
   governance: TaskGovernanceSchema.optional(),
   revisionRequest: TaskRevisionRequestSchema.optional(),
+  operatorAllowedActions: z.array(OperatorActionTypeSchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string()
 });
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 export type TaskAction = z.infer<typeof TaskActionSchema>;
+export type OperatorActionType = z.infer<typeof OperatorActionTypeSchema>;
+export type OperatorActionStatus = z.infer<typeof OperatorActionStatusSchema>;
 export type ReviewVerdict = z.infer<typeof ReviewVerdictSchema>;
 export type GovernanceExecutionMode = z.infer<typeof GovernanceExecutionModeSchema>;
 export type TaskGovernance = z.infer<typeof TaskGovernanceSchema>;
@@ -159,6 +208,9 @@ export type ACPRunSummaryStatus = z.infer<typeof ACPRunSummaryStatusSchema>;
 export type ACPRunSummaryPhase = z.infer<typeof ACPRunSummaryPhaseSchema>;
 export type ACPRunSummary = z.infer<typeof ACPRunSummarySchema>;
 export type TaskApprovalRequest = z.infer<typeof TaskApprovalRequestSchema>;
+export type OperatorActionRequest = z.infer<typeof OperatorActionRequestSchema>;
+export type OperatorActionRecord = z.infer<typeof OperatorActionRecordSchema>;
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 export type RecoveryState = z.infer<typeof RecoveryStateSchema>;
+export type OperatorActionSummary = z.infer<typeof OperatorActionSummarySchema>;
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;

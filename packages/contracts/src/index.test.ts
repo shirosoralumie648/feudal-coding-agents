@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AuditEventSchema,
+  OperatorActionRecordSchema,
+  OperatorActionSummarySchema,
   RecoveryStateSchema,
   TaskRecordSchema,
   TaskSpecSchema,
@@ -23,6 +25,71 @@ describe("contracts", () => {
 
   it("contains the ACP approval checkpoint state", () => {
     expect(TaskStatusSchema.options).toContain("awaiting_approval");
+  });
+
+  it("accepts abandoned tasks and operator action availability on task records", () => {
+    expect(TaskStatusSchema.options).toContain("abandoned");
+
+    const result = TaskRecordSchema.parse({
+      id: "task-operator",
+      title: "Recover executor",
+      prompt: "Retry the deployment",
+      status: "failed",
+      artifacts: [],
+      history: [],
+      runIds: [],
+      runs: [],
+      operatorAllowedActions: ["recover", "takeover", "abandon"],
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: [],
+        revisionCount: 0
+      },
+      createdAt: "2026-04-06T00:00:00.000Z",
+      updatedAt: "2026-04-06T00:05:00.000Z"
+    });
+
+    expect(result.operatorAllowedActions).toEqual([
+      "recover",
+      "takeover",
+      "abandon"
+    ]);
+  });
+
+  it("accepts operator action history and summary payloads", () => {
+    const record = OperatorActionRecordSchema.parse({
+      id: 1,
+      taskId: "task-operator",
+      actionType: "recover",
+      status: "applied",
+      note: "Retry after restoring the executor.",
+      actorType: "user",
+      createdAt: "2026-04-06T00:06:00.000Z",
+      appliedAt: "2026-04-06T00:06:00.000Z"
+    });
+
+    const summary = OperatorActionSummarySchema.parse({
+      tasksNeedingOperatorAttention: 1,
+      tasks: [
+        {
+          id: "task-operator",
+          title: "Recover executor",
+          status: "failed",
+          recoveryState: "healthy",
+          recoveryReason: undefined,
+          operatorAllowedActions: ["recover", "takeover", "abandon"]
+        }
+      ]
+    });
+
+    expect(record.actionType).toBe("recover");
+    expect(summary.tasks[0]?.operatorAllowedActions).toContain("takeover");
   });
 
   it("accepts ACP run summaries and approval request metadata without governance", () => {

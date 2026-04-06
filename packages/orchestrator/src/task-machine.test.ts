@@ -11,6 +11,7 @@ const baseTask: TaskRecord = {
   history: [],
   runIds: [],
   runs: [],
+  operatorAllowedActions: [],
   governance: {
     requestedRequiresApproval: true,
     effectiveRequiresApproval: true,
@@ -61,5 +62,52 @@ describe("transitionTask", () => {
     expect(() =>
       transitionTask(baseTask, { type: "approval.granted" })
     ).toThrow("Illegal transition");
+  });
+
+  it("routes operator recover, takeover, and abandon transitions", () => {
+    expect(
+      transitionTask(
+        { ...baseTask, status: "failed", operatorAllowedActions: ["recover"] },
+        { type: "operator.recovered" }
+      ).status
+    ).toBe("dispatching");
+
+    expect(
+      transitionTask(
+        {
+          ...baseTask,
+          status: "awaiting_approval",
+          operatorAllowedActions: ["takeover"]
+        },
+        { type: "operator.takeover_submitted" }
+      ).status
+    ).toBe("planning");
+
+    expect(
+      transitionTask(
+        { ...baseTask, status: "review", operatorAllowedActions: ["abandon"] },
+        { type: "operator.abandoned" }
+      ).status
+    ).toBe("abandoned");
+  });
+
+  it("allows recovery transitions from interrupted in-flight states", () => {
+    expect(
+      transitionTask(
+        { ...baseTask, status: "planning", operatorAllowedActions: ["recover"] },
+        { type: "operator.recovered" }
+      ).status
+    ).toBe("dispatching");
+
+    expect(
+      transitionTask(
+        {
+          ...baseTask,
+          status: "dispatching",
+          operatorAllowedActions: ["takeover"]
+        },
+        { type: "operator.takeover_submitted" }
+      ).status
+    ).toBe("planning");
   });
 });
