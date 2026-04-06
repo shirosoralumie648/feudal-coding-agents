@@ -65,7 +65,8 @@ describe("task event codec", () => {
           prompt: "Approve the decision brief?",
           actions: ["approve", "reject"]
         },
-        runs: [buildRunSummary()]
+        runs: [buildRunSummary()],
+        operatorAllowedActions: []
       },
       patchJson: [
         { op: "add", path: "/status", value: "awaiting_approval" },
@@ -78,9 +79,10 @@ describe("task event codec", () => {
             actions: ["approve", "reject"]
           }
         },
-        { op: "add", path: "/runs", value: [buildRunSummary()] }
+        { op: "add", path: "/runs", value: [buildRunSummary()] },
+        { op: "add", path: "/operatorAllowedActions", value: [] }
       ],
-      changedPaths: ["/status", "/approvalRequest", "/runs"]
+      changedPaths: ["/status", "/approvalRequest", "/runs", "/operatorAllowedActions"]
     });
   });
 
@@ -184,6 +186,25 @@ describe("task event codec", () => {
         "/status",
         "/governance",
         "/revisionRequest"
+      ])
+    });
+  });
+
+  it("tracks operator action availability alongside task status diffs", () => {
+    const task = buildTaskRecord({
+      status: "failed",
+      operatorAllowedActions: ["recover", "takeover", "abandon"]
+    });
+
+    const [, diffEvent] = buildTaskEventInputs(
+      task,
+      "task.execution_failed"
+    );
+
+    expect(diffEvent.payloadJson).toMatchObject({
+      changedPaths: expect.arrayContaining([
+        "/status",
+        "/operatorAllowedActions"
       ])
     });
   });

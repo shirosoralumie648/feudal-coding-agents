@@ -9,6 +9,7 @@ import {
   type TaskRecord
 } from "@feudal/contracts";
 import { createPostgresEventStore } from "@feudal/persistence";
+import { syncOperatorActions } from "../operator-actions/policy";
 import {
   buildTaskEventInputs,
   isTaskDiffEvent,
@@ -46,9 +47,15 @@ function toProjectionRecord(row: {
   latest_projection_version: number;
   payload_json: unknown;
 }) {
+  const recoveryState = RecoveryStateSchema.parse(row.recovery_state);
+  const task = syncOperatorActions(
+    TaskRecordSchema.parse(row.payload_json),
+    recoveryState
+  );
+
   return {
-    ...TaskRecordSchema.parse(row.payload_json),
-    recoveryState: RecoveryStateSchema.parse(row.recovery_state),
+    ...task,
+    recoveryState,
     recoveryReason: row.recovery_reason ?? undefined,
     lastRecoveredAt: row.last_recovered_at ? toIsoString(row.last_recovered_at) : undefined,
     latestEventId: Number(row.latest_event_id),
@@ -300,11 +307,13 @@ function toRunPhase(agent: string, phase: unknown): ACPRunSummary["phase"] {
 function toRecoveredTaskState(status: TaskRecord["status"]) {
   if (
     status === "awaiting_approval" ||
+    status === "needs_revision" ||
     status === "completed" ||
     status === "partial_success" ||
     status === "rejected" ||
     status === "failed" ||
-    status === "rolled_back"
+    status === "rolled_back" ||
+    status === "abandoned"
   ) {
     return {
       recoveryState: "healthy" as const,
@@ -400,11 +409,13 @@ export function createTaskReadModel(options: {
       saveOptions: SaveTaskOptions = {}
     ) {
       return options.eventStore.withTransaction(async (tx) => {
+        const recoveryState = saveOptions.recoveryState ?? "healthy";
+        const syncedTask = syncOperatorActions(task, recoveryState);
         const previousResult = await tx.query(
           `select payload_json
              from tasks_current
             where id = $1`,
-          [task.id]
+          [syncedTask.id]
         );
         const previousTask = previousResult.rows[0]?.payload_json
           ? TaskRecordSchema.parse(previousResult.rows[0].payload_json)
@@ -412,9 +423,9 @@ export function createTaskReadModel(options: {
         const appended = await options.eventStore.append(
           {
             streamType: "task",
-            streamId: task.id,
+            streamId: syncedTask.id,
             expectedVersion,
-            events: buildTaskEventInputs(task, eventType, previousTask)
+            events: buildTaskEventInputs(syncedTask, eventType, previousTask)
           },
           tx
         );
@@ -422,8 +433,8 @@ export function createTaskReadModel(options: {
         const latestEvent = appended.at(-1);
         await upsertTaskProjection({
           queryable: tx,
-          task,
-          recoveryState: saveOptions.recoveryState ?? "healthy",
+          task: syncedTask,
+          recoveryState,
           recoveryReason: saveOptions.recoveryReason,
           lastRecoveredAt: saveOptions.lastRecoveredAt ?? new Date().toISOString(),
           latestEventId: latestEvent?.id ?? 0,
@@ -431,11 +442,11 @@ export function createTaskReadModel(options: {
         });
         await replaceTaskHistoryEntries({
           queryable: tx,
-          task
+          task: syncedTask
         });
         await replaceTaskArtifacts({
           queryable: tx,
-          task,
+          task: syncedTask,
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
         });
@@ -445,7 +456,7 @@ export function createTaskReadModel(options: {
                task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
              ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
             [
-              task.id,
+              syncedTask.id,
               saveOptions.operatorAction.actionType,
               saveOptions.operatorAction.status,
               saveOptions.operatorAction.actorId ?? null,
@@ -459,20 +470,14 @@ export function createTaskReadModel(options: {
               saveOptions.operatorAction.createdAt
             ]
           );
-        } else {
-          await appendOperatorAction({
-            queryable: tx,
-            task,
-            eventType
-          });
         }
         await options.eventStore.writeCheckpoint("tasks_current", latestEvent?.id ?? 0, tx);
 
         return toTaskProjectionRecord({
-          task,
-          recoveryState: saveOptions.recoveryState ?? "healthy",
+          task: syncedTask,
+          recoveryState,
           recoveryReason: saveOptions.recoveryReason,
-          lastRecoveredAt: saveOptions.lastRecoveredAt ?? task.updatedAt,
+          lastRecoveredAt: saveOptions.lastRecoveredAt ?? syncedTask.updatedAt,
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
         });
@@ -656,10 +661,11 @@ export function createTaskReadModel(options: {
           }
 
           const recovered = toRecoveredTaskState(task.status);
+          const rebuiltTask = syncOperatorActions(task, recovered.recoveryState);
 
           await upsertTaskProjection({
             queryable: tx,
-            task,
+            task: rebuiltTask,
             recoveryState: recovered.recoveryState,
             recoveryReason: recovered.recoveryReason,
             lastRecoveredAt: task.updatedAt,
@@ -668,11 +674,11 @@ export function createTaskReadModel(options: {
           });
           await replaceTaskHistoryEntries({
             queryable: tx,
-            task
+            task: rebuiltTask
           });
           await replaceTaskArtifacts({
             queryable: tx,
-            task,
+            task: rebuiltTask,
             latestEventId: latestStreamPosition.eventId,
             latestProjectionVersion: latestStreamPosition.eventVersion
           });

@@ -158,103 +158,57 @@ describe("task read model persistence projections", () => {
     });
   });
 
-  it("records operator actions for approval and rejection events", async () => {
-    const { pool, readModel } = await createReadModel();
+  it("records explicit operator actions and lists them from persistence", async () => {
+    const { readModel } = await createReadModel();
 
     await readModel.saveTask(
       {
         ...task,
-        status: "completed",
+        status: "failed",
+        operatorAllowedActions: ["recover", "takeover", "abandon"],
         approvalRunId: undefined,
         approvalRequest: undefined,
         runs: [],
         runIds: [],
-        updatedAt: "2026-04-03T00:10:00.000Z"
+        updatedAt: "2026-04-06T00:10:00.000Z"
       },
-      "task.approved",
+      "task.execution_failed",
       0
     );
 
     await readModel.saveTask(
       {
         ...task,
-        status: "rejected",
+        status: "dispatching",
+        operatorAllowedActions: ["abandon"],
         approvalRunId: undefined,
         approvalRequest: undefined,
-        updatedAt: "2026-04-03T00:12:00.000Z"
+        runs: [],
+        runIds: [],
+        updatedAt: "2026-04-06T00:12:00.000Z"
       },
-      "task.rejected",
-      2
-    );
-
-    const actionRows = (
-      await pool.query(
-        `select action_type, status
-           from operator_actions
-          where task_id = $1
-          order by id asc`,
-        [task.id]
-      )
-    ).rows;
-
-    expect(actionRows).toEqual([
-      { action_type: "approve", status: "applied" },
-      { action_type: "reject", status: "applied" }
-    ]);
-  });
-
-  it("records revise operator actions and keeps governance data in rebuilt tasks", async () => {
-    const { pool, readModel } = await createReadModel();
-
-    await readModel.saveTask(
+      "task.operator_recovered",
+      2,
       {
-        ...task,
-        status: "planning",
-        governance: {
-          requestedRequiresApproval: false,
-          effectiveRequiresApproval: true,
-          allowMock: true,
-          sensitivity: "high",
-          executionMode: "mock_fallback_used",
-          policyReasons: ["high sensitivity forced approval"],
-          reviewVerdict: "approved",
-          allowedActions: [],
-          revisionCount: 1
-        },
-        revisionRequest: undefined,
-        updatedAt: "2026-04-03T00:15:00.000Z"
-      },
-      "task.revision_submitted",
-      0
+        recoveryState: "healthy",
+        operatorAction: {
+          actionType: "recover",
+          status: "applied",
+          note: "Executor restored; retry the run.",
+          actorType: "user",
+          createdAt: "2026-04-06T00:12:00.000Z",
+          appliedAt: "2026-04-06T00:12:00.000Z"
+        }
+      }
     );
 
-    const actionRows = (
-      await pool.query(
-        `select action_type, status
-           from operator_actions
-          where task_id = $1`,
-        [task.id]
-      )
-    ).rows;
-
-    expect(actionRows).toContainEqual({
-      action_type: "revise",
-      status: "applied"
-    });
-
-    await pool.query("delete from tasks_current");
-    await pool.query("delete from task_history_entries");
-    await pool.query("delete from artifacts_current");
-    await pool.query("delete from projection_checkpoint");
-
-    await readModel.rebuildProjectionsIfNeeded();
-
-    await expect(readModel.getTask(task.id)).resolves.toMatchObject({
-      governance: {
-        executionMode: "mock_fallback_used",
-        revisionCount: 1
-      }
-    });
+    await expect(readModel.listOperatorActions(task.id)).resolves.toContainEqual(
+      expect.objectContaining({
+        actionType: "recover",
+        status: "applied",
+        note: "Executor restored; retry the run."
+      })
+    );
   });
 
   it("lists task runs from runs_current and marks rebuilt in-flight tasks as recovery_required", async () => {
@@ -313,6 +267,64 @@ describe("task read model persistence projections", () => {
     await expect(readModel.getRecoverySummary()).resolves.toEqual({
       tasksNeedingRecovery: 1,
       runsNeedingRecovery: 0
+    });
+  });
+
+  it("summarizes tasks needing operator attention and keeps stable human-waiting states healthy after rebuild", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(
+      {
+        ...task,
+        status: "needs_revision",
+        operatorAllowedActions: ["abandon"],
+        governance: {
+          requestedRequiresApproval: true,
+          effectiveRequiresApproval: true,
+          allowMock: false,
+          sensitivity: "medium",
+          executionMode: "real",
+          policyReasons: [],
+          reviewVerdict: "needs_revision",
+          allowedActions: ["revise"],
+          revisionCount: 1
+        },
+        revisionRequest: {
+          note: "Clarify rollback scope.",
+          reviewerReasons: ["critic-agent requested a tighter rollback plan"],
+          createdAt: "2026-04-06T00:12:00.000Z"
+        },
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        runs: [],
+        runIds: [],
+        updatedAt: "2026-04-06T00:12:00.000Z"
+      },
+      "task.review_revision_requested",
+      0
+    );
+
+    await expect(readModel.getOperatorActionSummary()).resolves.toMatchObject({
+      tasksNeedingOperatorAttention: 1,
+      tasks: [
+        expect.objectContaining({
+          id: task.id,
+          operatorAllowedActions: ["abandon"]
+        })
+      ]
+    });
+
+    await pool.query("delete from tasks_current");
+    await pool.query("delete from task_history_entries");
+    await pool.query("delete from artifacts_current");
+    await pool.query("delete from projection_checkpoint");
+
+    await readModel.rebuildProjectionsIfNeeded();
+
+    await expect(readModel.getTask(task.id)).resolves.toMatchObject({
+      status: "needs_revision",
+      recoveryState: "healthy",
+      operatorAllowedActions: ["abandon"]
     });
   });
 
