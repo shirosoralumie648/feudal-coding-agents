@@ -5,6 +5,18 @@ test("drives one governance revision loop through approval and completion", asyn
 }) => {
   const title = "Governance revision drill";
   const prompt = "Exercise governance #mock:needs_revision-once";
+  const governanceActionPaths: string[] = [];
+
+  page.on("request", (request) => {
+    if (request.method() !== "POST") {
+      return;
+    }
+
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.match(/^\/api\/tasks\/[^/]+\/governance-actions\/[^/]+$/)) {
+      governanceActionPaths.push(pathname);
+    }
+  });
 
   await page.goto("/");
 
@@ -32,6 +44,13 @@ test("drives one governance revision loop through approval and completion", asyn
 
   await expect(page.locator(".governance-list")).toContainText("approved");
   await expect(page.locator(".governance-list")).toContainText("1");
+  await expect(governanceActionPaths).toHaveLength(2);
+  await expect(governanceActionPaths[0]).toMatch(
+    /^\/api\/tasks\/[^/]+\/governance-actions\/revise$/
+  );
+  await expect(governanceActionPaths[1]).toMatch(
+    /^\/api\/tasks\/[^/]+\/governance-actions\/approve$/
+  );
   await expect(page.getByText("Verifier accepted the execution report.")).toBeVisible();
   await expect(page.locator(".panel-approval .panel-header span")).toHaveText("0 waiting");
 });
