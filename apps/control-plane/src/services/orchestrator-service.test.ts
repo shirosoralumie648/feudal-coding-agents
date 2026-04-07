@@ -292,6 +292,48 @@ class StaleApprovalStateTaskStore extends MemoryTaskStore {
   }
 }
 
+class StaleRevisePositiveDriftTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-stale-revise-drift") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Stale revise drift task",
+      prompt: "Revise should be disallowed for completed tasks",
+      status: "completed",
+      artifacts: [],
+      history: [
+        {
+          status: "completed",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "task.completed"
+        }
+      ],
+      runIds: [],
+      runs: [],
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["revise"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: [],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
 function createRecordingACPClient(events: string[]): ACPClient {
   const base = createMockACPClient();
 
@@ -532,6 +574,19 @@ describe("orchestrator service durability", () => {
       service.submitGovernanceAction("task-stale-approval-state", "approve")
     ).rejects.toThrow("Task task-stale-approval-state does not allow approve");
     expect(events.some((event) => event.startsWith("respond:"))).toBe(false);
+  });
+
+  it("rejects stale positive revise drift before transition handling", async () => {
+    const service = createServiceWithGateway({
+      store: new StaleRevisePositiveDriftTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-stale-revise-drift", "revise", "retry")
+    ).rejects.toBeInstanceOf(ActionNotAllowedError);
+    await expect(
+      service.submitGovernanceAction("task-stale-revise-drift", "revise", "retry")
+    ).rejects.toThrow("Task task-stale-revise-drift does not allow revise");
   });
 
   it("uses createTaskRunGatewayFromEnv to run allowMock=false tasks in mock mode", async () => {

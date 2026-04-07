@@ -189,13 +189,19 @@ function allowedActions(task: TaskRecord): TaskAction[] {
 }
 
 function assertActionAllowed(task: TaskRecord, action: TaskAction) {
-  const governanceActions = task.governance?.allowedActions;
-  const actionSet =
-    governanceActions && governanceActions.length > 0
-      ? governanceActions
-      : allowedActionsForStatus(task.status);
+  const statusActions = allowedActionsForStatus(task.status);
 
-  if (!actionSet.includes(action)) {
+  if (!statusActions.includes(action)) {
+    throw new ActionNotAllowedError(task.id, action);
+  }
+
+  const governanceActions = task.governance?.allowedActions;
+
+  if (
+    governanceActions &&
+    governanceActions.length > 0 &&
+    !governanceActions.includes(action)
+  ) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
