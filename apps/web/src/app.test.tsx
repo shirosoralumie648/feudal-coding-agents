@@ -212,7 +212,10 @@ function mockConsoleApi(options?: {
       return json(createdTask, 201);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/approve`) && method === "POST") {
+    if (
+      url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/approve`) &&
+      method === "POST"
+    ) {
       const approvedTask =
         options?.approvedTask ??
         ({
@@ -262,7 +265,10 @@ function mockConsoleApi(options?: {
       return json(approvedTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/reject`) && method === "POST") {
+    if (
+      url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/reject`) &&
+      method === "POST"
+    ) {
       const rejectedTask =
         options?.rejectedTask ??
         ({
@@ -285,7 +291,10 @@ function mockConsoleApi(options?: {
       return json(rejectedTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/revise`) && method === "POST") {
+    if (
+      url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/revise`) &&
+      method === "POST"
+    ) {
       const revisedTask = options?.revisedTask ?? defaultTask;
       tasks = tasks.map((task) => (task.id === revisedTask.id ? revisedTask : task));
       return json(revisedTask);
@@ -392,7 +401,7 @@ describe("App", () => {
     ).toBeVisible();
     expect(await screen.findByText("Verifier accepted the work.")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/tasks/task-1/approve",
+      "/api/tasks/task-1/governance-actions/approve",
       expect.objectContaining({ method: "POST" })
     );
   });
@@ -409,7 +418,7 @@ describe("App", () => {
     ).toBeVisible();
     expect(await screen.findByText("approval.rejected")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/tasks/task-1/reject",
+      "/api/tasks/task-1/governance-actions/reject",
       expect.objectContaining({ method: "POST" })
     );
   });
@@ -644,11 +653,42 @@ describe("App", () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        `/api/tasks/${defaultTask.id}/revise`,
+        `/api/tasks/${defaultTask.id}/governance-actions/revise`,
         expect.objectContaining({ method: "POST" })
       )
     );
     expect(await screen.findByText("Approve the decision brief?")).toBeVisible();
+  });
+
+  it("fails closed when governance actions drift from the approval request", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject"]
+          },
+          governance: {
+            ...defaultTask.governance,
+            allowedActions: ["approve"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Governance action state is out of sync.")
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Approve Build dashboard" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reject Build dashboard" })
+    ).not.toBeInTheDocument();
   });
 
   it("renders the operator queue when the API reports operator attention", async () => {

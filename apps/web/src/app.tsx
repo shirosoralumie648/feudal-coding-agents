@@ -17,7 +17,6 @@ import { TaskDetailPanel } from "./components/task-detail-panel";
 import { TimelinePanel } from "./components/timeline-panel";
 import {
   abandonTask,
-  approveTask,
   createTask,
   fetchAgents,
   fetchOperatorSummary,
@@ -28,8 +27,7 @@ import {
   fetchTaskReplay,
   fetchTasks,
   recoverTask,
-  rejectTask,
-  reviseTask,
+  submitGovernanceAction,
   takeoverTask,
   type CreateTaskInput,
   type RecoverySummary,
@@ -316,6 +314,7 @@ export function App() {
     draft.title.trim().length > 0 &&
     draft.prompt.trim().length > 0 &&
     !isSubmitting;
+  type GovernanceActionType = "approve" | "reject" | "revise";
 
   function upsertTask(nextTask: TaskConsoleRecord) {
     setTasks((current) => {
@@ -408,73 +407,33 @@ export function App() {
     }
   }
 
-  async function handleApprove(taskId: string) {
+  async function handleGovernanceAction(
+    taskId: string,
+    action: GovernanceActionType,
+    note?: string
+  ) {
     setActiveGovernanceId(taskId);
 
     try {
-      const approvedTask = await approveTask(taskId);
+      const nextTask = await submitGovernanceAction(taskId, action, note);
 
       startTransition(() => {
-        upsertTask(approvedTask);
-        setSelectedTaskId(approvedTask.id);
+        upsertTask(nextTask);
+        setSelectedTaskId(nextTask.id);
+        if (action === "revise") {
+          setRevisionDrafts((current) => ({ ...current, [taskId]: "" }));
+        }
         setError(undefined);
       });
     } catch (nextError: unknown) {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Unable to approve the task."
-      );
-    } finally {
-      setActiveGovernanceId(undefined);
-    }
-  }
-
-  async function handleReject(taskId: string) {
-    setActiveGovernanceId(taskId);
-
-    try {
-      const rejectedTask = await rejectTask(taskId);
-
-      startTransition(() => {
-        upsertTask(rejectedTask);
-        setSelectedTaskId(rejectedTask.id);
-        setError(undefined);
-      });
-    } catch (nextError: unknown) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Unable to reject the task."
-      );
-    } finally {
-      setActiveGovernanceId(undefined);
-    }
-  }
-
-  async function handleRevisionSubmit(taskId: string) {
-    const note = revisionDrafts[taskId]?.trim();
-
-    if (!note) {
-      return;
-    }
-
-    setActiveGovernanceId(taskId);
-
-    try {
-      const revisedTask = await reviseTask(taskId, note);
-
-      startTransition(() => {
-        upsertTask(revisedTask);
-        setSelectedTaskId(revisedTask.id);
-        setRevisionDrafts((current) => ({ ...current, [taskId]: "" }));
-        setError(undefined);
-      });
-    } catch (nextError: unknown) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Unable to submit the revision note."
+          : action === "approve"
+            ? "Unable to approve the task."
+            : action === "reject"
+              ? "Unable to reject the task."
+              : "Unable to submit the revision note."
       );
     } finally {
       setActiveGovernanceId(undefined);
@@ -654,7 +613,13 @@ export function App() {
             setRevisionDrafts((current) => ({ ...current, [selectedTask.id]: value }));
           }}
           onSubmitRevision={() =>
-            selectedTask ? handleRevisionSubmit(selectedTask.id) : Promise.resolve()
+            selectedTask
+              ? handleGovernanceAction(
+                  selectedTask.id,
+                  "revise",
+                  revisionDrafts[selectedTask.id]?.trim()
+                )
+              : Promise.resolve()
           }
           revisionNote={selectedTask ? revisionDrafts[selectedTask.id] ?? "" : ""}
           revisionPending={activeGovernanceId === selectedTask?.id}
@@ -671,8 +636,7 @@ export function App() {
         <DiffInspectorPanel diffs={selectedTaskDiffs} />
         <ApprovalInboxPanel
           activeTaskId={activeGovernanceId}
-          onApprove={handleApprove}
-          onReject={handleReject}
+          onGovernanceAction={handleGovernanceAction}
           tasks={governanceTasks}
         />
         <AgentRegistryPanel agents={agents} />

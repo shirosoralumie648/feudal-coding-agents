@@ -1,14 +1,52 @@
 import type { TaskRecord } from "@feudal/contracts";
 
+type InlineGovernanceAction = "approve" | "reject";
+
 interface ApprovalInboxPanelProps {
   activeTaskId?: string;
-  onApprove: (taskId: string) => void | Promise<void>;
-  onReject: (taskId: string) => void | Promise<void>;
+  onGovernanceAction: (
+    taskId: string,
+    action: InlineGovernanceAction
+  ) => void | Promise<void>;
   tasks: TaskRecord[];
 }
 
+function getInlineActions(task: TaskRecord): InlineGovernanceAction[] {
+  const governanceActions = task.governance
+    ? task.governance.allowedActions
+    : task.status === "awaiting_approval"
+      ? ["approve", "reject"]
+      : [];
+
+  return governanceActions.filter(
+    (action): action is InlineGovernanceAction =>
+      action === "approve" || action === "reject"
+  );
+}
+
+function hasGovernanceDrift(
+  task: TaskRecord,
+  inlineActions: InlineGovernanceAction[]
+): boolean {
+  if (task.status !== "awaiting_approval" || !task.governance || !task.approvalRequest) {
+    return false;
+  }
+
+  const approvalRequestActions = task.approvalRequest.actions.filter(
+    (action): action is InlineGovernanceAction =>
+      action === "approve" || action === "reject"
+  );
+
+  if (approvalRequestActions.length !== inlineActions.length) {
+    return true;
+  }
+
+  const inlineActionSet = new Set(inlineActions);
+  return approvalRequestActions.some((action) => !inlineActionSet.has(action));
+}
+
 export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
-  const { activeTaskId, onApprove, onReject, tasks } = props;
+  const { activeTaskId, onGovernanceAction, tasks } = props;
 
   return (
     <section className="panel panel-approval">
@@ -19,12 +57,8 @@ export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
 
       <ul className="detail-list">
         {tasks.map((task) => {
-          const canApprove = task.governance
-            ? task.governance.allowedActions.includes("approve")
-            : task.status === "awaiting_approval";
-          const canReject = task.governance
-            ? task.governance.allowedActions.includes("reject")
-            : task.status === "awaiting_approval";
+          const inlineActions = getInlineActions(task);
+          const actionStateDrifted = hasGovernanceDrift(task, inlineActions);
 
           return (
             <li key={task.id}>
@@ -40,30 +74,25 @@ export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
                     <small>{task.approvalRequest.actions.join(" / ")}</small>
                   </>
                 ) : null}
+                {actionStateDrifted ? (
+                  <small>Governance action state is out of sync.</small>
+                ) : null}
               </div>
               <div className="button-row">
-                {canApprove ? (
-                  <button
-                    type="button"
-                    disabled={activeTaskId === task.id}
-                    onClick={() => void onApprove(task.id)}
-                  >
-                    {activeTaskId === task.id
-                      ? `Processing ${task.title}...`
-                      : `Approve ${task.title}`}
-                  </button>
-                ) : null}
-                {canReject ? (
-                  <button
-                    type="button"
-                    disabled={activeTaskId === task.id}
-                    onClick={() => void onReject(task.id)}
-                  >
-                    {activeTaskId === task.id
-                      ? `Processing ${task.title}...`
-                      : `Reject ${task.title}`}
-                  </button>
-                ) : null}
+                {actionStateDrifted
+                  ? null
+                  : inlineActions.map((action) => (
+                      <button
+                        key={action}
+                        type="button"
+                        disabled={activeTaskId === task.id}
+                        onClick={() => void onGovernanceAction(task.id, action)}
+                      >
+                        {activeTaskId === task.id
+                          ? `Processing ${task.title}...`
+                          : `${action === "approve" ? "Approve" : "Reject"} ${task.title}`}
+                      </button>
+                    ))}
               </div>
             </li>
           );
