@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { TaskSpecSchema } from "@feudal/contracts";
+import { TaskActionSchema, TaskSpecSchema, type TaskAction } from "@feudal/contracts";
 import { z } from "zod";
 import { defaultOrchestratorService } from "../config";
 import {
@@ -9,6 +9,11 @@ import {
 
 const TaskParamsSchema = z.object({
   taskId: z.string()
+});
+
+const TaskGovernanceActionParamsSchema = z.object({
+  taskId: z.string(),
+  actionType: TaskActionSchema
 });
 
 const RevisionInputSchema = z.object({
@@ -45,6 +50,49 @@ async function sendActionResult(
   }
 }
 
+function parseRevisionNote(
+  actionType: TaskAction,
+  body: unknown,
+  reply: FastifyReply
+): string | undefined {
+  if (actionType !== "revise") {
+    return undefined;
+  }
+
+  const payload = RevisionInputSchema.safeParse(body);
+
+  if (!payload.success) {
+    reply.code(400).send({ message: "Revision note must not be empty" });
+    return undefined;
+  }
+
+  return payload.data.note;
+}
+
+async function submitGovernanceActionRoute(options: {
+  service: OrchestratorService;
+  taskId: string;
+  actionType: TaskAction;
+  body: unknown;
+  reply: FastifyReply;
+}) {
+  const task = await ensureTaskExists(options.service, options.taskId, options.reply);
+
+  if (!task) {
+    return options.reply;
+  }
+
+  const note = parseRevisionNote(options.actionType, options.body, options.reply);
+
+  if (options.actionType === "revise" && typeof note === "undefined") {
+    return options.reply;
+  }
+
+  return sendActionResult(options.reply, () =>
+    options.service.submitGovernanceAction(options.taskId, options.actionType, note)
+  );
+}
+
 export function registerTaskRoutes(
   app: FastifyInstance,
   service: OrchestratorService = defaultOrchestratorService
@@ -72,39 +120,58 @@ export function registerTaskRoutes(
     return reply.code(201).send(projection);
   });
 
+  app.post(
+    "/api/tasks/:taskId/governance-actions/:actionType",
+    async (request, reply) => {
+      const params = TaskGovernanceActionParamsSchema.safeParse(request.params);
+
+      if (!params.success) {
+        return reply.code(400).send({ message: "Invalid governance action type" });
+      }
+
+      return submitGovernanceActionRoute({
+        service,
+        taskId: params.data.taskId,
+        actionType: params.data.actionType,
+        body: request.body,
+        reply
+      });
+    }
+  );
+
   app.post("/api/tasks/:taskId/approve", async (request, reply) => {
     const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
 
-    if (!task) {
-      return reply;
-    }
-
-    return sendActionResult(reply, () => service.approveTask(params.taskId));
+    return submitGovernanceActionRoute({
+      service,
+      taskId: params.taskId,
+      actionType: "approve",
+      body: request.body,
+      reply
+    });
   });
 
   app.post("/api/tasks/:taskId/reject", async (request, reply) => {
     const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
 
-    if (!task) {
-      return reply;
-    }
-
-    return sendActionResult(reply, () => service.rejectTask(params.taskId));
+    return submitGovernanceActionRoute({
+      service,
+      taskId: params.taskId,
+      actionType: "reject",
+      body: request.body,
+      reply
+    });
   });
 
   app.post("/api/tasks/:taskId/revise", async (request, reply) => {
     const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
 
-    if (!task) {
-      return reply;
-    }
-
-    const payload = RevisionInputSchema.parse(request.body);
-    return sendActionResult(reply, () =>
-      service.submitRevision(params.taskId, payload.note)
-    );
+    return submitGovernanceActionRoute({
+      service,
+      taskId: params.taskId,
+      actionType: "revise",
+      body: request.body,
+      reply
+    });
   });
 }
