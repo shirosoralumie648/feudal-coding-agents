@@ -32,10 +32,7 @@ function hasGovernanceDrift(
     return false;
   }
 
-  const approvalRequestActions = task.approvalRequest.actions.filter(
-    (action): action is InlineGovernanceAction =>
-      action === "approve" || action === "reject"
-  );
+  const approvalRequestActions = task.approvalRequest.actions;
 
   if (approvalRequestActions.length !== inlineActions.length) {
     return true;

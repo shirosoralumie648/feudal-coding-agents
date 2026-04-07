@@ -691,6 +691,37 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("fails closed when approval request contains an extra unexpected action", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject", "revise"]
+          },
+          governance: {
+            ...defaultTask.governance,
+            allowedActions: ["approve", "reject"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Governance action state is out of sync.")
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Approve Build dashboard" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reject Build dashboard" })
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the operator queue when the API reports operator attention", async () => {
     mockConsoleApi({
       recoverySummary: {
