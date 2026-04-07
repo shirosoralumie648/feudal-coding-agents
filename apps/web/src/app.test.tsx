@@ -763,6 +763,44 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("fails closed when governance is missing but approval actions are still advertised", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          governance: undefined,
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
+    const inboxSection = inboxPanel.closest("section");
+    expect(inboxSection).not.toBeNull();
+    expect(within(inboxSection as HTMLElement).getByText("Build dashboard")).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).getByText(
+        "Governance action state is out of sync."
+      )
+    ).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Approve Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Reject Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the operator queue when the API reports operator attention", async () => {
     mockConsoleApi({
       recoverySummary: {

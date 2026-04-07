@@ -12,11 +12,7 @@ interface ApprovalInboxPanelProps {
 }
 
 function getInlineActions(task: TaskRecord): InlineGovernanceAction[] {
-  const governanceActions = task.governance
-    ? task.governance.allowedActions
-    : task.status === "awaiting_approval"
-      ? ["approve", "reject"]
-      : [];
+  const governanceActions = task.governance ? task.governance.allowedActions : [];
 
   return governanceActions.filter(
     (action): action is InlineGovernanceAction =>
@@ -28,17 +24,23 @@ function hasGovernanceDrift(
   task: TaskRecord,
   inlineActions: InlineGovernanceAction[]
 ): boolean {
-  if (task.status !== "awaiting_approval" || !task.governance || !task.approvalRequest) {
+  if (task.status !== "awaiting_approval" || !task.approvalRequest) {
     return false;
   }
 
   const approvalRequestActions = task.approvalRequest.actions;
 
+  if (!task.governance) {
+    return approvalRequestActions.some(
+      (action) => action === "approve" || action === "reject"
+    );
+  }
+
   if (approvalRequestActions.length !== inlineActions.length) {
     return true;
   }
 
-  const inlineActionSet = new Set(inlineActions);
+  const inlineActionSet = new Set<string>(inlineActions);
   return approvalRequestActions.some((action) => !inlineActionSet.has(action));
 }
 
