@@ -99,23 +99,30 @@ export async function createTask(payload: CreateTaskInput) {
 }
 
 export async function approveTask(taskId: string) {
-  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/approve`, {
-    method: "POST"
-  });
+  return submitGovernanceAction(taskId, "approve");
 }
 
 export async function rejectTask(taskId: string) {
-  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/reject`, {
-    method: "POST"
-  });
+  return submitGovernanceAction(taskId, "reject");
 }
 
 export async function reviseTask(taskId: string, note: string) {
-  return requestJson<TaskConsoleRecord>(`/api/tasks/${taskId}/revise`, {
+  return submitGovernanceAction(taskId, "revise", note);
+}
+
+export async function submitGovernanceAction(
+  taskId: string,
+  actionType: "approve" | "reject" | "revise",
+  note?: string
+) {
+  return requestJson<TaskConsoleRecord>(
+    `/api/tasks/${taskId}/governance-actions/${actionType}`,
+    {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ note })
-  });
+      body: JSON.stringify(note === undefined ? {} : { note })
+    }
+  );
 }
 
 export async function recoverTask(taskId: string, note: string) {

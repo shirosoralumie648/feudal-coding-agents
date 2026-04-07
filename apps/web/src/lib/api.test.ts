@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  approveTask,
   abandonTask,
   fetchOperatorSummary,
   fetchTaskDiffs,
   fetchTaskOperatorActions,
+  rejectTask,
   recoverTask,
   reviseTask,
   takeoverTask
@@ -55,7 +57,7 @@ describe("fetchTaskDiffs", () => {
   });
 });
 
-describe("reviseTask", () => {
+describe("governance action api helpers", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -64,7 +66,7 @@ describe("reviseTask", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts revision notes to the governance route", async () => {
+  it("posts revision notes to the unified governance route", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -101,13 +103,130 @@ describe("reviseTask", () => {
 
     await reviseTask("task-1", "Revision note: tighten rollback scope.");
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/tasks/task-1/revise", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        note: "Revision note: tighten rollback scope."
-      })
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks/task-1/governance-actions/revise",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          note: "Revision note: tighten rollback scope."
+        })
+      }
+    );
+  });
+
+  it("posts approve and reject using empty json bodies", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "task-1", status: "approved" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "task-1", status: "rejected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await approveTask("task-1");
+    await rejectTask("task-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/tasks/task-1/governance-actions/approve",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      }
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/tasks/task-1/governance-actions/reject",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      }
+    );
+  });
+
+  it("uses unified governance route for all governance actions", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "task-1", status: "approved" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "task-1", status: "rejected" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "task-1", status: "awaiting_approval" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await approveTask("task-1");
+    await rejectTask("task-1");
+    await reviseTask("task-1", "Need another revision pass.");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/tasks/task-1/governance-actions/approve",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/tasks/task-1/governance-actions/reject",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/tasks/task-1/governance-actions/revise",
+      expect.any(Object)
+    );
+  });
+
+  it("does not call legacy governance routes", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ id: "task-1", status: "awaiting_approval" }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await approveTask("task-1");
+    await rejectTask("task-1");
+    await reviseTask("task-1", "Revise");
+
+    const calledPaths = fetchMock.mock.calls.map(([path]) => path);
+
+    expect(calledPaths).not.toContain("/api/tasks/task-1/approve");
+    expect(calledPaths).not.toContain("/api/tasks/task-1/reject");
+    expect(calledPaths).not.toContain("/api/tasks/task-1/revise");
+    expect(calledPaths).toEqual([
+      "/api/tasks/task-1/governance-actions/approve",
+      "/api/tasks/task-1/governance-actions/reject",
+      "/api/tasks/task-1/governance-actions/revise"
+    ]);
   });
 });
 
