@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AuditEventSchema,
   OperatorActionRecordSchema,
+  OperatorActionRequestSchema,
   OperatorActionSummarySchema,
   RecoveryStateSchema,
   TaskRecordSchema,
@@ -27,69 +28,8 @@ describe("contracts", () => {
     expect(TaskStatusSchema.options).toContain("awaiting_approval");
   });
 
-  it("accepts abandoned tasks and operator action availability on task records", () => {
+  it("contains the operator abandoned state", () => {
     expect(TaskStatusSchema.options).toContain("abandoned");
-
-    const result = TaskRecordSchema.parse({
-      id: "task-operator",
-      title: "Recover executor",
-      prompt: "Retry the deployment",
-      status: "failed",
-      artifacts: [],
-      history: [],
-      runIds: [],
-      runs: [],
-      operatorAllowedActions: ["recover", "takeover", "abandon"],
-      governance: {
-        requestedRequiresApproval: true,
-        effectiveRequiresApproval: true,
-        allowMock: false,
-        sensitivity: "medium",
-        executionMode: "real",
-        policyReasons: [],
-        reviewVerdict: "approved",
-        allowedActions: [],
-        revisionCount: 0
-      },
-      createdAt: "2026-04-06T00:00:00.000Z",
-      updatedAt: "2026-04-06T00:05:00.000Z"
-    });
-
-    expect(result.operatorAllowedActions).toEqual([
-      "recover",
-      "takeover",
-      "abandon"
-    ]);
-  });
-
-  it("accepts operator action history and summary payloads", () => {
-    const record = OperatorActionRecordSchema.parse({
-      id: 1,
-      taskId: "task-operator",
-      actionType: "recover",
-      status: "applied",
-      note: "Retry after restoring the executor.",
-      actorType: "user",
-      createdAt: "2026-04-06T00:06:00.000Z",
-      appliedAt: "2026-04-06T00:06:00.000Z"
-    });
-
-    const summary = OperatorActionSummarySchema.parse({
-      tasksNeedingOperatorAttention: 1,
-      tasks: [
-        {
-          id: "task-operator",
-          title: "Recover executor",
-          status: "failed",
-          recoveryState: "healthy",
-          recoveryReason: undefined,
-          operatorAllowedActions: ["recover", "takeover", "abandon"]
-        }
-      ]
-    });
-
-    expect(record.actionType).toBe("recover");
-    expect(summary.tasks[0]?.operatorAllowedActions).toContain("takeover");
   });
 
   it("accepts ACP run summaries and approval request metadata without governance", () => {
@@ -238,6 +178,168 @@ describe("contracts", () => {
     expect(result.revisionRequest?.reviewerReasons).toContain(
       "critic-agent requested tighter rollback language"
     );
+  });
+
+  it("accepts operator allowed actions on a task record", () => {
+    const result = TaskRecordSchema.parse({
+      id: "task-5",
+      title: "Recover stuck task",
+      prompt: "Handle takeover",
+      status: "failed",
+      artifacts: [],
+      history: [],
+      runIds: [],
+      operatorAllowedActions: ["recover", "takeover", "abandon"],
+      createdAt: "2026-04-04T00:00:00.000Z",
+      updatedAt: "2026-04-04T00:05:00.000Z"
+    });
+
+    expect(result.operatorAllowedActions).toEqual([
+      "recover",
+      "takeover",
+      "abandon"
+    ]);
+  });
+
+  it("accepts operator action history records", () => {
+    const requestedResult = OperatorActionRecordSchema.parse({
+      id: 0,
+      taskId: "task-4",
+      actionType: "takeover",
+      status: "requested",
+      note: "Operator is taking over recovery handling",
+      actorType: "operator",
+      actorId: "operator-2",
+      createdAt: "2026-04-04T00:00:00.000Z"
+    });
+    const appliedResult = OperatorActionRecordSchema.parse({
+      id: 1,
+      taskId: "task-5",
+      actionType: "recover",
+      status: "applied",
+      note: "Recovered from failed state",
+      actorType: "operator",
+      actorId: "operator-1",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      appliedAt: "2026-04-04T00:00:10.000Z"
+    });
+    const rejectedResult = OperatorActionRecordSchema.parse({
+      id: 2,
+      taskId: "task-6",
+      actionType: "takeover",
+      status: "rejected",
+      note: "Takeover request rejected by policy",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      rejectedAt: "2026-04-04T00:00:10.000Z",
+      rejectionReason: "active approval review in progress"
+    });
+
+    expect(requestedResult.status).toBe("requested");
+    expect(appliedResult.id).toBe(1);
+    expect(appliedResult.actionType).toBe("recover");
+    expect(appliedResult.appliedAt).toBe("2026-04-04T00:00:10.000Z");
+    expect(rejectedResult.status).toBe("rejected");
+    expect(rejectedResult.rejectionReason).toBe(
+      "active approval review in progress"
+    );
+  });
+
+  it("accepts operator action request payloads", () => {
+    const result = OperatorActionRequestSchema.parse({
+      actionType: "abandon",
+      note: "Abort task due to invalid external dependency state",
+      confirm: true
+    });
+
+    expect(result.actionType).toBe("abandon");
+    expect(result.confirm).toBe(true);
+  });
+
+  it("rejects operator action request payloads with whitespace-only notes", () => {
+    const result = OperatorActionRequestSchema.safeParse({
+      actionType: "recover",
+      note: "   "
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects operator action history records with whitespace-only notes", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 3,
+      taskId: "task-7",
+      actionType: "recover",
+      status: "requested",
+      note: "   ",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects applied operator action records without appliedAt", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 4,
+      taskId: "task-8",
+      actionType: "recover",
+      status: "applied",
+      note: "Recovered execution after restart",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects rejected operator action records without rejectedAt", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 5,
+      taskId: "task-9",
+      actionType: "abandon",
+      status: "rejected",
+      note: "Abandon request blocked",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      rejectionReason: "task already completed"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects rejected operator action records without rejectionReason", () => {
+    const result = OperatorActionRecordSchema.safeParse({
+      id: 6,
+      taskId: "task-10",
+      actionType: "abandon",
+      status: "rejected",
+      note: "Abandon request blocked",
+      actorType: "operator",
+      createdAt: "2026-04-04T00:00:00.000Z",
+      rejectedAt: "2026-04-04T00:00:10.000Z"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts operator action summary payloads", () => {
+    const result = OperatorActionSummarySchema.parse({
+      tasksNeedingOperatorAttention: 1,
+      tasks: [
+        {
+          id: "task-5",
+          title: "Recover stuck task",
+          status: "executing",
+          recoveryState: "recovery_required",
+          recoveryReason: "run heartbeat timeout",
+          operatorAllowedActions: ["recover", "takeover", "abandon"]
+        }
+      ]
+    });
+
+    expect(result.tasksNeedingOperatorAttention).toBe(1);
+    expect(result.tasks[0]?.recoveryState).toBe("recovery_required");
   });
 
   it("accepts audit event and recovery state metadata", () => {

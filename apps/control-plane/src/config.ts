@@ -49,7 +49,7 @@ export async function createTaskStoreFromEnv() {
   return createTaskReadModel({ eventStore });
 }
 
-function createLazyTaskStore(
+export function createLazyTaskStore(
   loadStore: () => Promise<TaskStore> = createTaskStoreFromEnv
 ): TaskStore {
   let storePromise: Promise<TaskStore> | undefined;
@@ -75,6 +75,18 @@ function createLazyTaskStore(
       return (await getStore()).saveTask(task, eventType, expectedVersion, options);
     },
 
+    async recordOperatorAction(input) {
+      await (await getStore()).recordOperatorAction(input);
+    },
+
+    async listOperatorActions(taskId) {
+      return (await getStore()).listOperatorActions(taskId);
+    },
+
+    async getOperatorActionSummary() {
+      return (await getStore()).getOperatorActionSummary();
+    },
+
     async listTaskEvents(taskId) {
       return (await getStore()).listTaskEvents(taskId);
     },
@@ -89,14 +101,6 @@ function createLazyTaskStore(
 
     async listTaskArtifacts(taskId) {
       return (await getStore()).listTaskArtifacts(taskId);
-    },
-
-    async listOperatorActions(taskId) {
-      return (await getStore()).listOperatorActions(taskId);
-    },
-
-    async getOperatorActionSummary() {
-      return (await getStore()).getOperatorActionSummary();
     },
 
     async replayTaskAtEventId(taskId, eventId) {

@@ -1,9 +1,13 @@
 import {
+  OperatorActionRecordSchema,
+  OperatorActionSummarySchema,
   RecoveryStateSchema,
   TaskRecordSchema,
   type ACPRunSummary,
   type AuditEvent,
   type OperatorActionRecord,
+  type OperatorActionStatus,
+  type OperatorActionType,
   type RecoveryState,
   type TaskArtifact,
   type TaskRecord
@@ -17,7 +21,6 @@ import {
   toAuditEvent,
   toTaskProjectionRecord
 } from "./task-event-codec";
-import type { SaveTaskOptions } from "../store";
 
 export interface TaskProjectionRecord extends TaskRecord {
   recoveryState: RecoveryState;
@@ -48,10 +51,7 @@ function toProjectionRecord(row: {
   payload_json: unknown;
 }) {
   const recoveryState = RecoveryStateSchema.parse(row.recovery_state);
-  const task = syncOperatorActions(
-    TaskRecordSchema.parse(row.payload_json),
-    recoveryState
-  );
+  const task = syncOperatorActions(TaskRecordSchema.parse(row.payload_json), recoveryState);
 
   return {
     ...task,
@@ -69,6 +69,38 @@ type ProjectionQueryable = {
     values: unknown[]
   ) => Promise<{ rows: Record<string, unknown>[] }>;
 };
+
+type RecordOperatorActionInput =
+  | {
+      taskId: string;
+      actionType: OperatorActionType;
+      status: "requested";
+      note: string;
+      actorType?: string;
+      actorId?: string;
+      payloadJson?: Record<string, unknown>;
+    }
+  | {
+      taskId: string;
+      actionType: OperatorActionType;
+      status: "applied";
+      note: string;
+      appliedAt: string;
+      actorType?: string;
+      actorId?: string;
+      payloadJson?: Record<string, unknown>;
+    }
+  | {
+      taskId: string;
+      actionType: OperatorActionType;
+      status: "rejected";
+      note: string;
+      rejectedAt: string;
+      rejectionReason: string;
+      actorType?: string;
+      actorId?: string;
+      payloadJson?: Record<string, unknown>;
+    };
 
 async function replaceTaskHistoryEntries(options: {
   queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
@@ -163,6 +195,98 @@ async function appendOperatorAction(options: {
   );
 }
 
+function toOperatorActionRecord(row: {
+  id: number;
+  task_id: string;
+  action_type: string;
+  status: string;
+  actor_id: string | null;
+  actor_type: string | null;
+  reason: string | null;
+  payload_json: unknown;
+  created_at: unknown;
+}) {
+  const payload = (row.payload_json ?? {}) as Record<string, unknown>;
+  const baseRecord = {
+    id: Number(row.id),
+    taskId: String(row.task_id),
+    actionType: String(row.action_type),
+    note: String(payload.note ?? row.reason ?? ""),
+    actorId: row.actor_id ?? undefined,
+    actorType: row.actor_type ?? "operator",
+    createdAt: toIsoString(row.created_at)
+  };
+  const status = String(row.status) as OperatorActionStatus;
+
+  if (status === "requested") {
+    return OperatorActionRecordSchema.parse({
+      ...baseRecord,
+      status
+    });
+  }
+
+  if (status === "applied") {
+    return OperatorActionRecordSchema.parse({
+      ...baseRecord,
+      status,
+      appliedAt: toIsoString(payload.appliedAt ?? row.created_at)
+    });
+  }
+
+  return OperatorActionRecordSchema.parse({
+    ...baseRecord,
+    status,
+    rejectedAt: toIsoString(payload.rejectedAt ?? row.created_at),
+    rejectionReason: String(payload.rejectionReason ?? row.reason ?? "Operator action rejected")
+  });
+}
+
+async function insertOperatorAction(options: {
+  queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
+  input: RecordOperatorActionInput;
+}) {
+  const createdAt =
+    options.input.status === "applied"
+      ? options.input.appliedAt
+      : options.input.status === "rejected"
+        ? options.input.rejectedAt
+        : new Date().toISOString();
+  const payloadJson =
+    options.input.status === "applied"
+      ? {
+          note: options.input.note,
+          appliedAt: options.input.appliedAt,
+          ...(options.input.payloadJson ?? {})
+        }
+      : options.input.status === "rejected"
+        ? {
+            note: options.input.note,
+            rejectedAt: options.input.rejectedAt,
+            rejectionReason: options.input.rejectionReason,
+            ...(options.input.payloadJson ?? {})
+          }
+        : {
+            note: options.input.note,
+            ...(options.input.payloadJson ?? {})
+          };
+
+  await options.queryable.query(
+    `insert into operator_actions (
+       task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
+     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      options.input.taskId,
+      options.input.actionType,
+      options.input.status,
+      options.input.actorId ?? null,
+      options.input.actorType ?? "operator",
+      options.input.status === "rejected" ? options.input.rejectionReason : null,
+      payloadJson,
+      createdAt
+    ]
+  );
+}
+
 async function loadTaskHistory(queryable: ProjectionQueryable, taskId: string) {
   const result = await queryable.query(
     `select status, at, note
@@ -226,37 +350,6 @@ async function loadTaskRuns(queryable: ProjectionQueryable, taskId: string) {
   });
 }
 
-async function loadOperatorActions(
-  queryable: ProjectionQueryable,
-  taskId: string
-) {
-  const result = await queryable.query(
-    `select id, task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
-       from operator_actions
-      where task_id = $1
-      order by id asc`,
-    [taskId]
-  );
-
-  return result.rows.map((row) => {
-    const payload = (row.payload_json ?? {}) as Record<string, unknown>;
-
-    return {
-      id: Number(row.id),
-      taskId: String(row.task_id),
-      actionType: String(row.action_type) as OperatorActionRecord["actionType"],
-      status: String(row.status) as OperatorActionRecord["status"],
-      note: typeof payload.note === "string" ? payload.note : "",
-      actorType: String(row.actor_type),
-      actorId: typeof row.actor_id === "string" ? row.actor_id : undefined,
-      createdAt: toIsoString(row.created_at),
-      appliedAt: typeof payload.appliedAt === "string" ? payload.appliedAt : undefined,
-      rejectedAt: typeof payload.rejectedAt === "string" ? payload.rejectedAt : undefined,
-      rejectionReason: typeof row.reason === "string" ? row.reason : undefined
-    } satisfies OperatorActionRecord;
-  });
-}
-
 async function hydrateTaskProjection(
   queryable: ProjectionQueryable,
   task: TaskProjectionRecord
@@ -307,13 +400,11 @@ function toRunPhase(agent: string, phase: unknown): ACPRunSummary["phase"] {
 function toRecoveredTaskState(status: TaskRecord["status"]) {
   if (
     status === "awaiting_approval" ||
-    status === "needs_revision" ||
     status === "completed" ||
     status === "partial_success" ||
     status === "rejected" ||
     status === "failed" ||
-    status === "rolled_back" ||
-    status === "abandoned"
+    status === "rolled_back"
   ) {
     return {
       recoveryState: "healthy" as const,
@@ -402,84 +493,131 @@ export function createTaskReadModel(options: {
       });
     },
 
-    async saveTask(
-      task: TaskRecord,
-      eventType: string,
-      expectedVersion: number,
-      saveOptions: SaveTaskOptions = {}
-    ) {
+    async saveTask(task: TaskRecord, eventType: string, expectedVersion: number) {
       return options.eventStore.withTransaction(async (tx) => {
-        const recoveryState = saveOptions.recoveryState ?? "healthy";
-        const syncedTask = syncOperatorActions(task, recoveryState);
         const previousResult = await tx.query(
-          `select payload_json
+          `select payload_json, recovery_state
              from tasks_current
             where id = $1`,
-          [syncedTask.id]
+          [task.id]
         );
         const previousTask = previousResult.rows[0]?.payload_json
-          ? TaskRecordSchema.parse(previousResult.rows[0].payload_json)
+          ? syncOperatorActions(
+              TaskRecordSchema.parse(previousResult.rows[0].payload_json),
+              RecoveryStateSchema.parse(previousResult.rows[0].recovery_state)
+            )
           : undefined;
+        const projectedTask = syncOperatorActions(task, "healthy");
         const appended = await options.eventStore.append(
           {
             streamType: "task",
-            streamId: syncedTask.id,
+            streamId: task.id,
             expectedVersion,
-            events: buildTaskEventInputs(syncedTask, eventType, previousTask)
+            events: buildTaskEventInputs(projectedTask, eventType, previousTask)
           },
           tx
         );
 
         const latestEvent = appended.at(-1);
+
         await upsertTaskProjection({
           queryable: tx,
-          task: syncedTask,
-          recoveryState,
-          recoveryReason: saveOptions.recoveryReason,
-          lastRecoveredAt: saveOptions.lastRecoveredAt ?? new Date().toISOString(),
+          task: projectedTask,
+          recoveryState: "healthy",
+          lastRecoveredAt: new Date().toISOString(),
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
         });
         await replaceTaskHistoryEntries({
           queryable: tx,
-          task: syncedTask
+          task: projectedTask
         });
         await replaceTaskArtifacts({
           queryable: tx,
-          task: syncedTask,
+          task: projectedTask,
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
         });
-        if (saveOptions.operatorAction) {
-          await tx.query(
-            `insert into operator_actions (
-               task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
-             ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-            [
-              syncedTask.id,
-              saveOptions.operatorAction.actionType,
-              saveOptions.operatorAction.status,
-              saveOptions.operatorAction.actorId ?? null,
-              saveOptions.operatorAction.actorType,
-              saveOptions.operatorAction.rejectionReason ?? null,
-              {
-                note: saveOptions.operatorAction.note,
-                appliedAt: saveOptions.operatorAction.appliedAt ?? null,
-                rejectedAt: saveOptions.operatorAction.rejectedAt ?? null
-              },
-              saveOptions.operatorAction.createdAt
-            ]
-          );
-        }
+        await appendOperatorAction({
+          queryable: tx,
+          task: projectedTask,
+          eventType
+        });
         await options.eventStore.writeCheckpoint("tasks_current", latestEvent?.id ?? 0, tx);
 
         return toTaskProjectionRecord({
-          task: syncedTask,
-          recoveryState,
-          recoveryReason: saveOptions.recoveryReason,
-          lastRecoveredAt: saveOptions.lastRecoveredAt ?? syncedTask.updatedAt,
+          task: projectedTask,
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
+        });
+      });
+    },
+
+    async recordOperatorAction(input: RecordOperatorActionInput) {
+      return options.eventStore.withTransaction(async (tx) => {
+        const existing = await tx.query(`select id from tasks_current where id = $1`, [input.taskId]);
+
+        if (!existing.rows[0]) {
+          return;
+        }
+
+        await insertOperatorAction({
+          queryable: tx,
+          input
+        });
+      });
+    },
+
+    async listOperatorActions(taskId: string) {
+      return options.eventStore.withTransaction(async (tx) => {
+        const existing = await tx.query(`select id from tasks_current where id = $1`, [taskId]);
+
+        if (!existing.rows[0]) {
+          return undefined;
+        }
+
+        const result = await tx.query(
+          `select id, task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
+             from operator_actions
+            where task_id = $1
+              and action_type in ('recover', 'takeover', 'abandon')
+            order by id asc`,
+          [taskId]
+        );
+
+        return result.rows.map((row) => toOperatorActionRecord(row as never));
+      });
+    },
+
+    async getOperatorActionSummary() {
+      return options.eventStore.withTransaction(async (tx) => {
+        const result = await tx.query(
+          `select recovery_state, recovery_reason, last_recovered_at,
+                  latest_event_id, latest_projection_version, payload_json
+             from tasks_current
+            order by updated_at desc`
+        );
+
+        const tasks = result.rows
+          .map((row) => toProjectionRecord(row as never))
+          .filter((task) => task.status === "failed" || task.recoveryState === "recovery_required")
+          .sort((left, right) => {
+            const leftPriority = left.recoveryState === "recovery_required" ? 1 : 0;
+            const rightPriority = right.recoveryState === "recovery_required" ? 1 : 0;
+
+            return rightPriority - leftPriority;
+          });
+
+        return OperatorActionSummarySchema.parse({
+          tasksNeedingOperatorAttention: tasks.length,
+          tasks: tasks.map((task) => ({
+            id: task.id,
+            title: task.title,
+            status: task.status,
+            recoveryState: task.recoveryState,
+            recoveryReason: task.recoveryReason,
+            operatorAllowedActions: task.operatorAllowedActions
+          }))
         });
       });
     },
@@ -524,36 +662,6 @@ export function createTaskReadModel(options: {
       });
     },
 
-    async listOperatorActions(taskId: string) {
-      return options.eventStore.withTransaction(async (tx) => {
-        const result = await tx.query(`select id from tasks_current where id = $1`, [taskId]);
-
-        if (!result.rows[0]) {
-          return undefined;
-        }
-
-        return loadOperatorActions(tx as ProjectionQueryable, taskId);
-      });
-    },
-
-    async getOperatorActionSummary() {
-      const tasks = (await this.listTasks())
-        .filter((task) => task.operatorAllowedActions.length > 0)
-        .map((task) => ({
-          id: task.id,
-          title: task.title,
-          status: task.status,
-          recoveryState: task.recoveryState,
-          recoveryReason: task.recoveryReason,
-          operatorAllowedActions: task.operatorAllowedActions
-        }));
-
-      return {
-        tasksNeedingOperatorAttention: tasks.length,
-        tasks
-      };
-    },
-
     async replayTaskAtEventId(taskId: string, eventId: number) {
       const taskEvents = await this.listTaskEvents(taskId);
 
@@ -584,7 +692,7 @@ export function createTaskReadModel(options: {
 
       return {
         task: toTaskProjectionRecord({
-          task: latestTask,
+          task: syncOperatorActions(latestTask, "healthy"),
           latestEventId: latestEvent.id,
           latestProjectionVersion: latestEvent.eventVersion
         })
@@ -661,11 +769,11 @@ export function createTaskReadModel(options: {
           }
 
           const recovered = toRecoveredTaskState(task.status);
-          const rebuiltTask = syncOperatorActions(task, recovered.recoveryState);
+          const projectedTask = syncOperatorActions(task, recovered.recoveryState);
 
           await upsertTaskProjection({
             queryable: tx,
-            task: rebuiltTask,
+            task: projectedTask,
             recoveryState: recovered.recoveryState,
             recoveryReason: recovered.recoveryReason,
             lastRecoveredAt: task.updatedAt,
@@ -674,11 +782,11 @@ export function createTaskReadModel(options: {
           });
           await replaceTaskHistoryEntries({
             queryable: tx,
-            task: rebuiltTask
+            task: projectedTask
           });
           await replaceTaskArtifacts({
             queryable: tx,
-            task: rebuiltTask,
+            task: projectedTask,
             latestEventId: latestStreamPosition.eventId,
             latestProjectionVersion: latestStreamPosition.eventVersion
           });

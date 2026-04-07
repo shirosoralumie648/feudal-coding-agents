@@ -4,6 +4,7 @@ import type {
   ACPRunSummary,
   GovernanceExecutionMode,
   OperatorActionType,
+  RecoveryState,
   TaskAction,
   TaskArtifact,
   TaskGovernance,
@@ -18,21 +19,19 @@ import {
   syncGovernance
 } from "../governance/policy";
 import {
-  operatorAllowedActionsForTask,
+  assertOperatorActionAllowed,
   syncOperatorActions
 } from "../operator-actions/policy";
 import type { TaskProjectionRecord } from "../persistence/task-read-model";
-import { MemoryTaskStore, type SaveTaskOptions, type TaskStore } from "../store";
+import { MemoryTaskStore, type TaskStore } from "../store";
 import { createTaskRunGateway, type TaskRunGateway } from "./task-run-gateway";
 
 const APPROVAL_PROMPT = "Approve the decision brief?";
 const MOCK_FALLBACK_REASON = "mock fallback used after real ACP failure";
 const REVISION_LIMIT_REASON = "revision limit reached";
 
-type TaskCommandAction = TaskAction | OperatorActionType;
-
 export class ActionNotAllowedError extends Error {
-  constructor(taskId: string, action: TaskCommandAction) {
+  constructor(taskId: string, action: TaskAction) {
     super(`Task ${taskId} does not allow ${action}`);
     this.name = "ActionNotAllowedError";
   }
@@ -40,24 +39,25 @@ export class ActionNotAllowedError extends Error {
 
 export interface OrchestratorService {
   createTask(spec: TaskSpec): Promise<TaskProjectionRecord>;
+  submitGovernanceAction(
+    taskId: string,
+    action: TaskAction,
+    note?: string
+  ): Promise<TaskProjectionRecord>;
   approveTask(taskId: string): Promise<TaskProjectionRecord>;
   rejectTask(taskId: string): Promise<TaskProjectionRecord>;
   submitRevision(taskId: string, note: string): Promise<TaskProjectionRecord>;
   recoverTask(taskId: string, note: string): Promise<TaskProjectionRecord>;
   takeoverTask(taskId: string, note: string): Promise<TaskProjectionRecord>;
-  abandonTask(
-    taskId: string,
-    note: string,
-    confirm: boolean
-  ): Promise<TaskProjectionRecord>;
+  abandonTask(taskId: string, note: string): Promise<TaskProjectionRecord>;
   listTasks(): Promise<TaskProjectionRecord[]>;
   getTask(taskId: string): Promise<TaskProjectionRecord | undefined>;
+  listOperatorActions(taskId: string): ReturnType<TaskStore["listOperatorActions"]>;
+  getOperatorActionSummary(): ReturnType<TaskStore["getOperatorActionSummary"]>;
   listTaskEvents(taskId: string): ReturnType<TaskStore["listTaskEvents"]>;
   listTaskDiffs(taskId: string): ReturnType<TaskStore["listTaskDiffs"]>;
   listTaskRuns(taskId: string): ReturnType<TaskStore["listTaskRuns"]>;
   listTaskArtifacts(taskId: string): ReturnType<TaskStore["listTaskArtifacts"]>;
-  listOperatorActions(taskId: string): ReturnType<TaskStore["listOperatorActions"]>;
-  getOperatorActionSummary(): ReturnType<TaskStore["getOperatorActionSummary"]>;
   replayTaskAtEventId(
     taskId: string,
     eventId: number
@@ -69,8 +69,7 @@ export interface OrchestratorService {
 
 type PersistTask = (
   taskSnapshot: TaskRecord,
-  eventType: string,
-  options?: SaveTaskOptions
+  eventType: string
 ) => Promise<TaskProjectionRecord>;
 
 interface StepResult {
@@ -190,23 +189,35 @@ function allowedActions(task: TaskRecord): TaskAction[] {
 }
 
 function assertActionAllowed(task: TaskRecord, action: TaskAction) {
-  const taskWithGovernance = syncGovernance(task);
+  const statusActions = allowedActionsForStatus(task.status);
 
-  if (!allowedActions(taskWithGovernance).includes(action)) {
+  if (!statusActions.includes(action)) {
+    throw new ActionNotAllowedError(task.id, action);
+  }
+
+  const governanceActions = task.governance?.allowedActions;
+
+  if (
+    governanceActions &&
+    governanceActions.length > 0 &&
+    !governanceActions.includes(action)
+  ) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
 
-function assertOperatorActionAllowed(
-  task: TaskProjectionRecord,
-  action: OperatorActionType
-) {
-  const allowed = operatorAllowedActionsForTask({
-    status: task.status,
-    recoveryState: task.recoveryState
-  });
+function assertApprovalActionAllowed(task: TaskRecord, action: TaskAction) {
+  if (task.status !== "awaiting_approval" || action === "revise") {
+    return;
+  }
 
-  if (!allowed.includes(action)) {
+  if (!task.approvalRequest) {
+    return;
+  }
+
+  const approvalActions = task.approvalRequest.actions;
+
+  if (!approvalActions.includes(action)) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
@@ -251,62 +262,68 @@ function revisionNoteMessage(note: string): ACPMessage {
   };
 }
 
-function operatorContinuationMessage(note: string): ACPMessage {
-  return {
-    role: "user",
-    content: `Operator takeover note: ${note}`
-  };
-}
-
-function appendHistoryNote(task: TaskRecord, note: string): TaskRecord {
-  return {
-    ...task,
-    history: [
-      ...task.history,
-      {
-        status: task.status,
-        at: task.updatedAt,
-        note
-      }
-    ]
-  };
-}
-
-function clearApprovalState(task: TaskRecord): TaskRecord {
-  return {
-    ...task,
-    approvalRunId: undefined,
-    approvalRequest: undefined
-  };
-}
-
 function createPersistTask(options: {
   store: TaskStore;
   initialVersion: number;
 }) {
   let latestProjectionVersion = options.initialVersion;
 
-  const persistTask: PersistTask = async (taskSnapshot, eventType, saveOptions = {}) => {
-    const recoveryState = saveOptions.recoveryState ?? "healthy";
+  const persistTask: PersistTask = async (taskSnapshot, eventType) => {
     const syncedSnapshot = syncOperatorActions(
       syncGovernance(taskSnapshot),
-      recoveryState
+      currentRecoveryState(taskSnapshot)
     );
     const projection = await options.store.saveTask(
       syncedSnapshot,
       eventType,
-      latestProjectionVersion,
-      {
-        ...saveOptions,
-        recoveryState,
-        lastRecoveredAt: saveOptions.lastRecoveredAt ?? syncedSnapshot.updatedAt
-      }
+      latestProjectionVersion
     );
     latestProjectionVersion = projection.latestProjectionVersion;
     return projection;
   };
 
   return persistTask;
+}
+
+function currentRecoveryState(task: TaskRecord): RecoveryState {
+  return (task as TaskRecord & { recoveryState?: RecoveryState }).recoveryState ?? "healthy";
+}
+
+function withRecoveryState(task: TaskRecord, recoveryState: RecoveryState): TaskRecord {
+  const projectionTask = task as TaskRecord & { recoveryReason?: string };
+
+  return {
+    ...task,
+    recoveryState,
+    recoveryReason:
+      recoveryState === "healthy" ? undefined : projectionTask.recoveryReason
+  } as TaskRecord;
+}
+
+function replaceLatestHistoryNote(task: TaskRecord, note: string): TaskRecord {
+  if (task.history.length === 0) {
+    return task;
+  }
+
+  const history = [...task.history];
+  history[history.length - 1] = {
+    ...history[history.length - 1]!,
+    note
+  };
+
+  return { ...task, history };
+}
+
+const OPERATOR_NOTE_ERROR = "Operator note must not be empty";
+
+function normalizeOperatorNote(note: string) {
+  const trimmed = note.trim();
+
+  if (trimmed.length === 0) {
+    throw new Error(OPERATOR_NOTE_ERROR);
+  }
+
+  return trimmed;
 }
 
 function createRevisionLimitRejection(task: TaskRecord): TaskRecord {
@@ -346,6 +363,40 @@ export function createOrchestratorService(options: {
   }
 
   const store = options.store ?? new MemoryTaskStore();
+
+  async function recordRequestedThenValidate(
+    current: TaskProjectionRecord,
+    actionType: OperatorActionType,
+    note: string
+  ) {
+    await store.recordOperatorAction({
+      taskId: current.id,
+      actionType,
+      status: "requested",
+      note,
+      payloadJson: {
+        fromStatus: current.status,
+        recoveryState: current.recoveryState
+      }
+    });
+
+    try {
+      assertOperatorActionAllowed(
+        syncOperatorActions(current, current.recoveryState),
+        actionType
+      );
+    } catch (error) {
+      await store.recordOperatorAction({
+        taskId: current.id,
+        actionType,
+        status: "rejected",
+        note,
+        rejectedAt: new Date().toISOString(),
+        rejectionReason: error instanceof Error ? error.message : "Operator action rejected"
+      });
+      throw error;
+    }
+  }
 
   async function runStep(
     task: TaskRecord,
@@ -464,7 +515,6 @@ export function createOrchestratorService(options: {
     persistTask: PersistTask;
     runMetadata: Record<string, unknown>;
     revisionNote?: string;
-    continuationNotes?: ACPMessage[];
   }) {
     let task = options.task;
     const revisionNote = options.revisionNote?.trim();
@@ -479,10 +529,6 @@ export function createOrchestratorService(options: {
 
     if (revisionNote) {
       planningMessages.push(revisionNoteMessage(revisionNote));
-    }
-
-    for (const note of options.continuationNotes ?? []) {
-      planningMessages.push(note);
     }
 
     const planningStep = await runStep(task, "planning", {
@@ -511,10 +557,6 @@ export function createOrchestratorService(options: {
 
     if (revisionNote) {
       reviewMessages.push(revisionNoteMessage(revisionNote));
-    }
-
-    for (const note of options.continuationNotes ?? []) {
-      reviewMessages.push(note);
     }
 
     const auditorStep = await runStep(task, "review", {
@@ -615,6 +657,103 @@ export function createOrchestratorService(options: {
     });
   }
 
+  async function submitGovernanceAction(
+    taskId: string,
+    action: TaskAction,
+    note?: string
+  ): Promise<TaskProjectionRecord> {
+    const current = await store.getTask(taskId);
+
+    if (!current) {
+      if (action === "approve" || action === "reject") {
+        throw new Error(`Task ${taskId} is not awaiting approval`);
+      }
+
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    if (
+      (action === "approve" || action === "reject") &&
+      current.status !== "awaiting_approval"
+    ) {
+      throw new ActionNotAllowedError(taskId, action);
+    }
+
+    assertActionAllowed(current, action);
+    assertApprovalActionAllowed(current, action);
+
+    if (action === "approve" || action === "reject") {
+      if (!current.approvalRunId) {
+        throw new Error(`Task ${taskId} is missing approval run state`);
+      }
+
+      const persistTask = createPersistTask({
+        store,
+        initialVersion: current.latestProjectionVersion
+      });
+      const resumedApprovalRun = await runGateway.respondToAwait(
+        { executionMode: currentExecutionMode(current) },
+        current.approvalRunId,
+        {
+          role: "user",
+          content: action
+        }
+      );
+
+      let task = transitionTask(current, {
+        type: action === "approve" ? "approval.granted" : "approval.rejected"
+      });
+      task = updateExistingRunSummary(task, resumedApprovalRun, "approval");
+      task = {
+        ...task,
+        approvalRunId: undefined,
+        approvalRequest: undefined
+      };
+
+      if (action === "approve") {
+        await persistTask(task, "task.approved");
+
+        return runExecutionAndVerification({
+          task,
+          persistTask,
+          runMetadata: { taskId }
+        });
+      }
+
+      return persistTask(task, "task.rejected");
+    }
+
+    const trimmedNote = note?.trim() ?? "";
+
+    if (trimmedNote.length === 0) {
+      throw new Error("Revision note must not be empty");
+    }
+
+    const persistTask = createPersistTask({
+      store,
+      initialVersion: current.latestProjectionVersion
+    });
+    const governance = ensureGovernance(current);
+    let task = transitionTask(current, { type: "revision.submitted" });
+    task = {
+      ...task,
+      governance: {
+        ...governance,
+        reviewVerdict: "pending",
+        revisionCount: governance.revisionCount + 1
+      },
+      revisionRequest: undefined
+    };
+    await persistTask(task, "task.revision_submitted");
+
+    return runPlanningReviewAndBranch({
+      task,
+      persistTask,
+      runMetadata: { taskId },
+      revisionNote: trimmedNote
+    });
+  }
+
   return {
     async createTask(spec: TaskSpec): Promise<TaskProjectionRecord> {
       const runMetadata = { taskId: spec.id };
@@ -645,261 +784,143 @@ export function createOrchestratorService(options: {
       });
     },
 
+    submitGovernanceAction,
+
     async approveTask(taskId: string): Promise<TaskProjectionRecord> {
-      const current = await store.getTask(taskId);
-
-      if (!current) {
-        throw new Error(`Task ${taskId} is not awaiting approval`);
-      }
-
-      assertActionAllowed(current, "approve");
-
-      if (!current.approvalRunId) {
-        throw new Error(`Task ${taskId} is missing approval run state`);
-      }
-
-      const persistTask = createPersistTask({
-        store,
-        initialVersion: current.latestProjectionVersion
-      });
-      const resumedApprovalRun = await runGateway.respondToAwait(
-        { executionMode: currentExecutionMode(current) },
-        current.approvalRunId,
-        {
-          role: "user",
-          content: "approve"
-        }
-      );
-
-      let task = transitionTask(current, { type: "approval.granted" });
-      task = updateExistingRunSummary(task, resumedApprovalRun, "approval");
-      task = {
-        ...task,
-        approvalRunId: undefined,
-        approvalRequest: undefined
-      };
-      await persistTask(task, "task.approved");
-
-      return runExecutionAndVerification({
-        task,
-        persistTask,
-        runMetadata: { taskId }
-      });
+      return submitGovernanceAction(taskId, "approve");
     },
 
     async rejectTask(taskId: string): Promise<TaskProjectionRecord> {
+      return submitGovernanceAction(taskId, "reject");
+    },
+
+    async submitRevision(taskId: string, note: string): Promise<TaskProjectionRecord> {
+      return submitGovernanceAction(taskId, "revise", note);
+    },
+
+    async recoverTask(taskId: string, noteInput: string): Promise<TaskProjectionRecord> {
       const current = await store.getTask(taskId);
 
       if (!current) {
-        throw new Error(`Task ${taskId} is not awaiting approval`);
+        throw new Error(`Task ${taskId} not found`);
       }
 
-      assertActionAllowed(current, "reject");
-
-      if (!current.approvalRunId) {
-        throw new Error(`Task ${taskId} is missing approval run state`);
-      }
+      const note = normalizeOperatorNote(noteInput);
+      await recordRequestedThenValidate(current, "recover", note);
 
       const persistTask = createPersistTask({
         store,
         initialVersion: current.latestProjectionVersion
       });
-      const resumedApprovalRun = await runGateway.respondToAwait(
-        { executionMode: currentExecutionMode(current) },
-        current.approvalRunId,
-        {
-          role: "user",
-          content: "reject"
-        }
-      );
-
-      let task = transitionTask(current, { type: "approval.rejected" });
-      task = updateExistingRunSummary(task, resumedApprovalRun, "approval");
+      let task = transitionTask(withRecoveryState(current, "healthy"), {
+        type: "operator.recovered"
+      });
+      task = replaceLatestHistoryNote(task, `task.operator_recovered: ${note}`);
       task = {
         ...task,
         approvalRunId: undefined,
         approvalRequest: undefined
       };
 
-      return persistTask(task, "task.rejected");
-    },
-
-    async submitRevision(taskId: string, note: string): Promise<TaskProjectionRecord> {
-      const current = await store.getTask(taskId);
-
-      if (!current) {
-        throw new Error(`Task ${taskId} not found`);
-      }
-
-      const trimmedNote = note.trim();
-
-      if (trimmedNote.length === 0) {
-        throw new Error("Revision note must not be empty");
-      }
-
-      assertActionAllowed(current, "revise");
-
-      const persistTask = createPersistTask({
-        store,
-        initialVersion: current.latestProjectionVersion
-      });
-      const governance = ensureGovernance(current);
-      let task = transitionTask(current, { type: "revision.submitted" });
-      task = {
-        ...task,
-        governance: {
-          ...governance,
-          reviewVerdict: "pending",
-          revisionCount: governance.revisionCount + 1
-        },
-        revisionRequest: undefined
-      };
-      await persistTask(task, "task.revision_submitted");
-
-      return runPlanningReviewAndBranch({
-        task,
-        persistTask,
-        runMetadata: { taskId },
-        revisionNote: trimmedNote
-      });
-    },
-
-    async recoverTask(taskId: string, note: string): Promise<TaskProjectionRecord> {
-      const current = await store.getTask(taskId);
-
-      if (!current) {
-        throw new Error(`Task ${taskId} not found`);
-      }
-
-      const trimmedNote = note.trim();
-
-      if (trimmedNote.length === 0) {
-        throw new Error("Operator note must not be empty");
-      }
-
-      assertOperatorActionAllowed(current, "recover");
-
-      const persistTask = createPersistTask({
-        store,
-        initialVersion: current.latestProjectionVersion
-      });
-      let task = transitionTask(current, { type: "operator.recovered" });
-      task = appendHistoryNote(task, `Operator recover note: ${trimmedNote}`);
-      await persistTask(task, "task.operator_recovered", {
-        recoveryState: "healthy",
-        operatorAction: {
-          actionType: "recover",
-          status: "applied",
-          note: trimmedNote,
-          actorType: "user",
-          createdAt: task.updatedAt,
-          appliedAt: task.updatedAt
-        }
+      const persisted = await persistTask(task, "task.operator_recovered");
+      await store.recordOperatorAction({
+        taskId,
+        actionType: "recover",
+        status: "applied",
+        note,
+        appliedAt: new Date().toISOString(),
+        payloadJson: { eventType: "task.operator_recovered" }
       });
 
       return runExecutionAndVerification({
-        task,
+        task: persisted,
         persistTask,
         runMetadata: { taskId }
       });
     },
 
-    async takeoverTask(taskId: string, note: string): Promise<TaskProjectionRecord> {
+    async takeoverTask(taskId: string, noteInput: string): Promise<TaskProjectionRecord> {
       const current = await store.getTask(taskId);
 
       if (!current) {
         throw new Error(`Task ${taskId} not found`);
       }
 
-      const trimmedNote = note.trim();
-
-      if (trimmedNote.length === 0) {
-        throw new Error("Operator note must not be empty");
-      }
-
-      assertOperatorActionAllowed(current, "takeover");
+      const note = normalizeOperatorNote(noteInput);
+      await recordRequestedThenValidate(current, "takeover", note);
 
       const persistTask = createPersistTask({
         store,
         initialVersion: current.latestProjectionVersion
       });
-      let task = transitionTask(clearApprovalState(current), {
+      let task = transitionTask(withRecoveryState(current, "healthy"), {
         type: "operator.takeover_submitted"
       });
-      task = appendHistoryNote(task, `Operator takeover note: ${trimmedNote}`);
+      task = replaceLatestHistoryNote(task, `task.operator_takeover_submitted: ${note}`);
       task = {
         ...task,
-        governance: current.governance
-          ? {
-              ...current.governance,
-              reviewVerdict: "pending"
-            }
-          : undefined,
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        governance: task.governance
+          ? { ...task.governance, reviewVerdict: "pending" }
+          : task.governance,
         revisionRequest: undefined
       };
-      await persistTask(task, "task.operator_takeover_submitted", {
-        recoveryState: "healthy",
-        operatorAction: {
-          actionType: "takeover",
-          status: "applied",
-          note: trimmedNote,
-          actorType: "user",
-          createdAt: task.updatedAt,
-          appliedAt: task.updatedAt
-        }
+
+      const persisted = await persistTask(task, "task.operator_takeover_submitted");
+      await store.recordOperatorAction({
+        taskId,
+        actionType: "takeover",
+        status: "applied",
+        note,
+        appliedAt: new Date().toISOString(),
+        payloadJson: { eventType: "task.operator_takeover_submitted" }
       });
 
       return runPlanningReviewAndBranch({
-        task,
+        task: persisted,
         persistTask,
         runMetadata: { taskId },
-        continuationNotes: [operatorContinuationMessage(trimmedNote)]
+        revisionNote: note
       });
     },
 
-    async abandonTask(
-      taskId: string,
-      note: string,
-      confirm: boolean
-    ): Promise<TaskProjectionRecord> {
+    async abandonTask(taskId: string, noteInput: string): Promise<TaskProjectionRecord> {
       const current = await store.getTask(taskId);
 
       if (!current) {
         throw new Error(`Task ${taskId} not found`);
       }
 
-      const trimmedNote = note.trim();
-
-      if (trimmedNote.length === 0) {
-        throw new Error("Operator note must not be empty");
-      }
-
-      if (!confirm) {
-        throw new Error("Abandon confirmation is required");
-      }
-
-      assertOperatorActionAllowed(current, "abandon");
+      const note = normalizeOperatorNote(noteInput);
+      await recordRequestedThenValidate(current, "abandon", note);
 
       const persistTask = createPersistTask({
         store,
         initialVersion: current.latestProjectionVersion
       });
-      let task = transitionTask(clearApprovalState(current), {
+      let task = transitionTask(withRecoveryState(current, "healthy"), {
         type: "operator.abandoned"
       });
-      task = appendHistoryNote(task, `Operator abandon note: ${trimmedNote}`);
+      task = replaceLatestHistoryNote(task, `task.operator_abandoned: ${note}`);
+      task = {
+        ...task,
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        revisionRequest: undefined
+      };
 
-      return persistTask(task, "task.operator_abandoned", {
-        recoveryState: "healthy",
-        operatorAction: {
-          actionType: "abandon",
-          status: "applied",
-          note: trimmedNote,
-          actorType: "user",
-          createdAt: task.updatedAt,
-          appliedAt: task.updatedAt
-        }
+      const persisted = await persistTask(task, "task.operator_abandoned");
+      await store.recordOperatorAction({
+        taskId,
+        actionType: "abandon",
+        status: "applied",
+        note,
+        appliedAt: new Date().toISOString(),
+        payloadJson: { eventType: "task.operator_abandoned" }
       });
+
+      return persisted;
     },
 
     async listTasks() {
@@ -908,6 +929,14 @@ export function createOrchestratorService(options: {
 
     async getTask(taskId: string) {
       return store.getTask(taskId);
+    },
+
+    async listOperatorActions(taskId: string) {
+      return store.listOperatorActions(taskId);
+    },
+
+    async getOperatorActionSummary() {
+      return store.getOperatorActionSummary();
     },
 
     async listTaskEvents(taskId: string) {
@@ -924,14 +953,6 @@ export function createOrchestratorService(options: {
 
     async listTaskArtifacts(taskId: string) {
       return store.listTaskArtifacts(taskId);
-    },
-
-    async listOperatorActions(taskId: string) {
-      return store.listOperatorActions(taskId);
-    },
-
-    async getOperatorActionSummary() {
-      return store.getOperatorActionSummary();
     },
 
     async replayTaskAtEventId(taskId: string, eventId: number) {

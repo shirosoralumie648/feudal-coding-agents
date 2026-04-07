@@ -109,6 +109,10 @@ textarea {
   grid-column: span 4;
 }
 
+.panel-operator-queue {
+  grid-column: span 4;
+}
+
 .panel-detail {
   grid-column: span 5;
 }
@@ -221,6 +225,7 @@ textarea {
 }
 
 .task-form button,
+.operator-console-panel button,
 .detail-list button {
   padding: 12px 16px;
   border: none;
@@ -231,6 +236,7 @@ textarea {
 }
 
 .task-form button:disabled,
+.operator-console-panel button:disabled,
 .detail-list button:disabled {
   opacity: 0.55;
 }
@@ -291,6 +297,43 @@ textarea {
   width: 100%;
   min-height: 7rem;
   margin-top: 8px;
+}
+
+.operator-console-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 253, 249, 0.92);
+  border: 1px solid rgba(161, 63, 43, 0.1);
+}
+
+.operator-console-panel p,
+.operator-console-panel label {
+  margin: 0;
+}
+
+.operator-console-panel textarea {
+  width: 100%;
+  min-height: 7rem;
+  margin-top: 8px;
+}
+
+.operator-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.operator-history li {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 248, 240, 0.96);
+  border: 1px solid rgba(161, 63, 43, 0.08);
 }
 
 .button-row {
@@ -358,6 +401,7 @@ textarea {
 
   .panel-form,
   .panel-approval,
+  .panel-operator-queue,
   .panel-detail,
   .panel-replay,
   .panel-diff,

@@ -3,7 +3,7 @@ import type {
   AuditEvent,
   OperatorActionRecord,
   OperatorActionSummary,
-  RecoveryState,
+  OperatorActionType,
   TaskArtifact,
   TaskRecord
 } from "@feudal/contracts";
@@ -19,28 +19,53 @@ function toEventVersionMismatchError(taskId: string) {
   return new Error(`Event version mismatch for task:${taskId}`);
 }
 
-export interface SaveTaskOptions {
-  recoveryState?: RecoveryState;
-  recoveryReason?: string;
-  lastRecoveredAt?: string;
-  operatorAction?: Omit<OperatorActionRecord, "id" | "taskId">;
-}
-
 export interface TaskStore {
   listTasks(): Promise<TaskProjectionRecord[]>;
   getTask(taskId: string): Promise<TaskProjectionRecord | undefined>;
   saveTask(
     task: TaskRecord,
     eventType: string,
-    expectedVersion: number,
-    options?: SaveTaskOptions
+    expectedVersion: number
   ): Promise<TaskProjectionRecord>;
+  recordOperatorAction(
+    input:
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "requested";
+          note: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "applied";
+          note: string;
+          appliedAt: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "rejected";
+          note: string;
+          rejectedAt: string;
+          rejectionReason: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+  ): Promise<void>;
+  listOperatorActions(taskId: string): Promise<OperatorActionRecord[] | undefined>;
+  getOperatorActionSummary(): Promise<OperatorActionSummary>;
   listTaskEvents(taskId: string): Promise<AuditEvent[] | undefined>;
   listTaskDiffs(taskId: string): Promise<AuditEvent[] | undefined>;
   listTaskRuns(taskId: string): Promise<ACPRunSummary[] | undefined>;
   listTaskArtifacts(taskId: string): Promise<TaskArtifact[] | undefined>;
-  listOperatorActions(taskId: string): Promise<OperatorActionRecord[] | undefined>;
-  getOperatorActionSummary(): Promise<OperatorActionSummary>;
   replayTaskAtEventId(
     taskId: string,
     eventId: number
@@ -67,12 +92,7 @@ export class MemoryTaskStore implements TaskStore {
     return this.tasks.get(taskId);
   }
 
-  async saveTask(
-    task: TaskRecord,
-    eventType: string,
-    expectedVersion: number,
-    options: SaveTaskOptions = {}
-  ) {
+  async saveTask(task: TaskRecord, eventType: string, expectedVersion: number) {
     const existingEvents = this.events.get(task.id) ?? [];
     const currentVersion = existingEvents.at(-1)?.eventVersion ?? 0;
     const previousTask = this.tasks.get(task.id);
@@ -95,25 +115,8 @@ export class MemoryTaskStore implements TaskStore {
       })
     ) satisfies AuditEvent[];
     const latestEvent = appendedEvents.at(-1);
-
-    if (options.operatorAction) {
-      const nextRecord: OperatorActionRecord = {
-        id: this.nextOperatorActionId++,
-        taskId: task.id,
-        ...options.operatorAction
-      };
-
-      this.operatorActions.set(task.id, [
-        ...(this.operatorActions.get(task.id) ?? []),
-        nextRecord
-      ]);
-    }
-
     const projection = toTaskProjectionRecord({
       task,
-      recoveryState: options.recoveryState ?? "healthy",
-      recoveryReason: options.recoveryReason,
-      lastRecoveredAt: options.lastRecoveredAt ?? task.updatedAt,
       latestEventId: latestEvent?.id ?? 0,
       latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
     });
@@ -122,6 +125,108 @@ export class MemoryTaskStore implements TaskStore {
     this.tasks.set(task.id, projection);
 
     return projection;
+  }
+
+  async recordOperatorAction(
+    input:
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "requested";
+          note: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "applied";
+          note: string;
+          appliedAt: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+      | {
+          taskId: string;
+          actionType: OperatorActionType;
+          status: "rejected";
+          note: string;
+          rejectedAt: string;
+          rejectionReason: string;
+          actorType?: string;
+          actorId?: string;
+          payloadJson?: Record<string, unknown>;
+        }
+  ) {
+    const current = this.operatorActions.get(input.taskId) ?? [];
+    const createdAt = new Date().toISOString();
+    const baseRecord = {
+      id: this.nextOperatorActionId++,
+      taskId: input.taskId,
+      actionType: input.actionType,
+      note: input.note,
+      actorType: input.actorType ?? "operator",
+      actorId: input.actorId,
+      createdAt
+    };
+    let record: OperatorActionRecord;
+
+    if (input.status === "requested") {
+      record = {
+        ...baseRecord,
+        status: input.status
+      };
+    } else if (input.status === "applied") {
+      record = {
+        ...baseRecord,
+        status: input.status,
+        appliedAt: input.appliedAt
+      };
+    } else {
+      record = {
+        ...baseRecord,
+        status: input.status,
+        rejectedAt: input.rejectedAt,
+        rejectionReason: input.rejectionReason
+      };
+    }
+
+    this.operatorActions.set(input.taskId, [...current, record]);
+  }
+
+  async listOperatorActions(taskId: string) {
+    if (!this.tasks.has(taskId)) {
+      return undefined;
+    }
+
+    return [...(this.operatorActions.get(taskId) ?? [])];
+  }
+
+  async getOperatorActionSummary() {
+    const tasks = [...this.tasks.values()]
+      .filter(
+        (task) => task.status === "failed" || task.recoveryState === "recovery_required"
+      )
+      .sort((left, right) => {
+        const leftPriority = left.recoveryState === "recovery_required" ? 1 : 0;
+        const rightPriority = right.recoveryState === "recovery_required" ? 1 : 0;
+
+        return rightPriority - leftPriority;
+      });
+
+    return {
+      tasksNeedingOperatorAttention: tasks.length,
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        recoveryState: task.recoveryState,
+        recoveryReason: task.recoveryReason,
+        operatorAllowedActions: task.operatorAllowedActions
+      }))
+    };
   }
 
   async listTaskEvents(taskId: string) {
@@ -143,32 +248,6 @@ export class MemoryTaskStore implements TaskStore {
 
   async listTaskArtifacts(taskId: string) {
     return (await this.getTask(taskId))?.artifacts;
-  }
-
-  async listOperatorActions(taskId: string) {
-    if (!this.tasks.has(taskId)) {
-      return undefined;
-    }
-
-    return [...(this.operatorActions.get(taskId) ?? [])];
-  }
-
-  async getOperatorActionSummary() {
-    const tasks = [...this.tasks.values()]
-      .filter((task) => task.operatorAllowedActions.length > 0)
-      .map((task) => ({
-        id: task.id,
-        title: task.title,
-        status: task.status,
-        recoveryState: task.recoveryState,
-        recoveryReason: task.recoveryReason,
-        operatorAllowedActions: task.operatorAllowedActions
-      }));
-
-    return {
-      tasksNeedingOperatorAttention: tasks.length,
-      tasks
-    };
   }
 
   async replayTaskAtEventId(taskId: string, eventId: number) {
@@ -202,9 +281,6 @@ export class MemoryTaskStore implements TaskStore {
     return {
       task: toTaskProjectionRecord({
         task: latestTask,
-        recoveryState: "healthy",
-        recoveryReason: undefined,
-        lastRecoveredAt: latestTask.updatedAt,
         latestEventId: latestEvent.id,
         latestProjectionVersion: latestEvent.eventVersion
       })

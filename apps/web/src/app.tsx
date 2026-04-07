@@ -1,24 +1,34 @@
 import { startTransition, useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { ACPAgentManifest } from "@feudal/acp";
-import type { TaskRecord, TaskStatus } from "@feudal/contracts";
+import type {
+  OperatorActionRecord,
+  OperatorActionSummary,
+  OperatorActionType,
+  TaskRecord,
+  TaskStatus
+} from "@feudal/contracts";
 import { AgentRegistryPanel } from "./components/agent-registry-panel";
 import { ApprovalInboxPanel } from "./components/approval-inbox-panel";
 import { DiffInspectorPanel } from "./components/diff-inspector-panel";
 import { NewTaskPanel } from "./components/new-task-panel";
+import { OperatorQueuePanel } from "./components/operator-queue-panel";
 import { TaskDetailPanel } from "./components/task-detail-panel";
 import { TimelinePanel } from "./components/timeline-panel";
 import {
-  approveTask,
+  abandonTask,
   createTask,
   fetchAgents,
+  fetchOperatorSummary,
   fetchRecoverySummary,
+  fetchTaskOperatorActions,
   fetchTaskDiffs,
   fetchTaskEvents,
   fetchTaskReplay,
   fetchTasks,
-  rejectTask,
-  reviseTask,
+  recoverTask,
+  submitGovernanceAction,
+  takeoverTask,
   type CreateTaskInput,
   type RecoverySummary,
   type TaskConsoleRecord,
@@ -47,6 +57,7 @@ const laneLabels: Record<TaskStatus, string> = {
   executing: "Executing",
   verifying: "Verifying",
   completed: "Completed",
+  abandoned: "Abandoned",
   needs_revision: "Needs Revision",
   partial_success: "Partial Success",
   rejected: "Rejected",
@@ -74,6 +85,15 @@ export function App() {
   const [agents, setAgents] = useState<ACPAgentManifest[]>([]);
   const [taskEvents, setTaskEvents] = useState<Record<string, TaskEventSummary[]>>({});
   const [taskDiffs, setTaskDiffs] = useState<Record<string, TaskDiffEntry[]>>({});
+  const [operatorActions, setOperatorActions] = useState<
+    Record<string, OperatorActionRecord[]>
+  >({});
+  const [operatorSummary, setOperatorSummary] = useState<OperatorActionSummary>({
+    tasksNeedingOperatorAttention: 0,
+    tasks: []
+  });
+  const [operatorSummaryLoaded, setOperatorSummaryLoaded] = useState(false);
+  const [operatorSummaryRetryNonce, setOperatorSummaryRetryNonce] = useState(0);
   const [taskReplay, setTaskReplay] = useState<
     Record<string, Pick<TaskRecord, "id" | "title" | "status">>
   >({});
@@ -85,6 +105,10 @@ export function App() {
   const [error, setError] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeGovernanceId, setActiveGovernanceId] = useState<string>();
+  const [activeOperatorAction, setActiveOperatorAction] = useState<
+    { taskId: string; action: OperatorActionType } | undefined
+  >();
+  const [operatorDrafts, setOperatorDrafts] = useState<Record<string, string>>({});
   const [revisionDrafts, setRevisionDrafts] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<CreateTaskInput>({
     title: "",
@@ -97,15 +121,32 @@ export function App() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([fetchTasks(), fetchAgents(), fetchRecoverySummary()])
-      .then(async ([nextTasks, nextAgents, nextRecovery]) => {
+    Promise.all([
+      fetchTasks(),
+      fetchAgents(),
+      fetchRecoverySummary(),
+      fetchOperatorSummary()
+        .then((summary) => ({
+          loaded: true,
+          summary
+        }))
+        .catch(() => ({
+          loaded: false,
+          summary: {
+            tasksNeedingOperatorAttention: 0,
+            tasks: []
+          }
+        }))
+    ])
+      .then(async ([nextTasks, nextAgents, nextRecovery, nextOperator]) => {
         const initialTaskId = nextTasks[0]?.id;
-        const [initialEvents, initialDiffs] = initialTaskId
-          ? await Promise.all([
+        const [initialEvents, initialDiffs, initialOperatorActions] = initialTaskId
+          ? await Promise.allSettled([
               fetchTaskEvents(initialTaskId),
-              fetchTaskDiffs(initialTaskId)
+              fetchTaskDiffs(initialTaskId),
+              fetchTaskOperatorActions(initialTaskId)
             ])
-          : [[], []];
+          : [];
 
         if (!active) {
           return;
@@ -115,10 +156,30 @@ export function App() {
           setTasks((current) => mergeLoadedTasks(current, nextTasks));
           setAgents(nextAgents);
           setRecoverySummary(nextRecovery);
+          setOperatorSummary(nextOperator.summary);
+          setOperatorSummaryLoaded(nextOperator.loaded);
           setSelectedTaskId((current) => current ?? initialTaskId);
           if (initialTaskId) {
-            setTaskEvents((current) => ({ ...current, [initialTaskId]: initialEvents }));
-            setTaskDiffs((current) => ({ ...current, [initialTaskId]: initialDiffs }));
+            if (initialEvents?.status === "fulfilled") {
+              setTaskEvents((current) => ({
+                ...current,
+                [initialTaskId]: initialEvents.value
+              }));
+            }
+
+            if (initialDiffs?.status === "fulfilled") {
+              setTaskDiffs((current) => ({
+                ...current,
+                [initialTaskId]: initialDiffs.value
+              }));
+            }
+
+            if (initialOperatorActions?.status === "fulfilled") {
+              setOperatorActions((current) => ({
+                ...current,
+                [initialTaskId]: initialOperatorActions.value
+              }));
+            }
           }
           setError(undefined);
         });
@@ -141,23 +202,66 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (operatorSummaryLoaded || tasks.length === 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setOperatorSummaryRetryNonce((current) => current + 1);
+    }, 2_000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [operatorSummaryLoaded, operatorSummaryRetryNonce, tasks.length]);
+
+  useEffect(() => {
     const taskId = selectedTaskId ?? tasks[0]?.id;
 
-    if (!taskId || (taskEvents[taskId] && taskDiffs[taskId])) {
+    const hasEvents = Boolean(taskEvents[taskId]);
+    const hasDiffs = Boolean(taskDiffs[taskId]);
+    const hasOperatorActions = Boolean(operatorActions[taskId]);
+    const needsOperatorSummary = !operatorSummaryLoaded;
+
+    if (!taskId || (hasEvents && hasDiffs && hasOperatorActions && !needsOperatorSummary)) {
       return;
     }
 
     let active = true;
 
-    Promise.all([fetchTaskEvents(taskId), fetchTaskDiffs(taskId)])
-      .then(([nextEvents, nextDiffs]) => {
+    Promise.allSettled([
+      hasEvents ? Promise.resolve(taskEvents[taskId] ?? []) : fetchTaskEvents(taskId),
+      hasDiffs ? Promise.resolve(taskDiffs[taskId] ?? []) : fetchTaskDiffs(taskId),
+      hasOperatorActions
+        ? Promise.resolve(operatorActions[taskId] ?? [])
+        : fetchTaskOperatorActions(taskId),
+      needsOperatorSummary ? fetchOperatorSummary() : Promise.resolve(operatorSummary)
+    ])
+      .then(([nextEvents, nextDiffs, nextOperatorActions, nextOperatorSummary]) => {
         if (!active) {
           return;
         }
 
         startTransition(() => {
-          setTaskEvents((current) => ({ ...current, [taskId]: nextEvents }));
-          setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs }));
+          if (nextEvents.status === "fulfilled") {
+            setTaskEvents((current) => ({ ...current, [taskId]: nextEvents.value }));
+          }
+
+          if (nextDiffs.status === "fulfilled") {
+            setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs.value }));
+          }
+
+          if (nextOperatorActions.status === "fulfilled") {
+            setOperatorActions((current) => ({
+              ...current,
+              [taskId]: nextOperatorActions.value
+            }));
+          }
+
+          if (nextOperatorSummary.status === "fulfilled") {
+            setOperatorSummary(nextOperatorSummary.value);
+            setOperatorSummaryLoaded(true);
+          }
         });
       })
       .catch((nextError: unknown) => {
@@ -175,20 +279,36 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [selectedTaskId, taskDiffs, taskEvents, tasks]);
+  }, [
+    operatorActions,
+    operatorSummary,
+    operatorSummaryLoaded,
+    operatorSummaryRetryNonce,
+    selectedTaskId,
+    taskDiffs,
+    taskEvents,
+    tasks
+  ]);
 
   const selectedTask =
     tasks.find((task) => task.id === selectedTaskId) ?? tasks[0] ?? null;
   const selectedTaskEvents = selectedTask ? taskEvents[selectedTask.id] ?? [] : [];
   const selectedTaskDiffs = selectedTask ? taskDiffs[selectedTask.id] ?? [] : [];
+  const selectedTaskOperatorActions = selectedTask
+    ? operatorActions[selectedTask.id] ?? []
+    : [];
   const selectedReplayTask = selectedTask ? taskReplay[selectedTask.id] : undefined;
   const awaitingTasks = tasks.filter((task) => task.status === "awaiting_approval");
   const governanceTasks = tasks.filter((task) => {
+    if (task.status === "awaiting_approval") {
+      return true;
+    }
+
     if (task.governance) {
       return task.governance.allowedActions.length > 0;
     }
 
-    return task.status === "awaiting_approval";
+    return false;
   });
   const recoveryCount =
     recoverySummary.tasksNeedingRecovery + recoverySummary.runsNeedingRecovery;
@@ -198,6 +318,7 @@ export function App() {
     draft.title.trim().length > 0 &&
     draft.prompt.trim().length > 0 &&
     !isSubmitting;
+  type GovernanceActionType = "approve" | "reject" | "revise";
 
   function upsertTask(nextTask: TaskConsoleRecord) {
     setTasks((current) => {
@@ -210,6 +331,36 @@ export function App() {
       const nextTasks = [...current];
       nextTasks[existingIndex] = nextTask;
       return nextTasks;
+    });
+  }
+
+  async function refreshOperatorContext(taskId: string) {
+    const [nextActions, nextSummary, nextEvents, nextDiffs] = await Promise.allSettled([
+      fetchTaskOperatorActions(taskId),
+      fetchOperatorSummary(),
+      fetchTaskEvents(taskId),
+      fetchTaskDiffs(taskId)
+    ]);
+
+    startTransition(() => {
+      if (nextActions.status === "fulfilled") {
+        setOperatorActions((current) => ({ ...current, [taskId]: nextActions.value }));
+      }
+
+      if (nextSummary.status === "fulfilled") {
+        setOperatorSummary(nextSummary.value);
+        setOperatorSummaryLoaded(true);
+      } else {
+        setOperatorSummaryLoaded(false);
+      }
+
+      if (nextEvents.status === "fulfilled") {
+        setTaskEvents((current) => ({ ...current, [taskId]: nextEvents.value }));
+      }
+
+      if (nextDiffs.status === "fulfilled") {
+        setTaskDiffs((current) => ({ ...current, [taskId]: nextDiffs.value }));
+      }
     });
   }
 
@@ -260,73 +411,33 @@ export function App() {
     }
   }
 
-  async function handleApprove(taskId: string) {
+  async function handleGovernanceAction(
+    taskId: string,
+    action: GovernanceActionType,
+    note?: string
+  ) {
     setActiveGovernanceId(taskId);
 
     try {
-      const approvedTask = await approveTask(taskId);
+      const nextTask = await submitGovernanceAction(taskId, action, note);
 
       startTransition(() => {
-        upsertTask(approvedTask);
-        setSelectedTaskId(approvedTask.id);
+        upsertTask(nextTask);
+        setSelectedTaskId(nextTask.id);
+        if (action === "revise") {
+          setRevisionDrafts((current) => ({ ...current, [taskId]: "" }));
+        }
         setError(undefined);
       });
     } catch (nextError: unknown) {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Unable to approve the task."
-      );
-    } finally {
-      setActiveGovernanceId(undefined);
-    }
-  }
-
-  async function handleReject(taskId: string) {
-    setActiveGovernanceId(taskId);
-
-    try {
-      const rejectedTask = await rejectTask(taskId);
-
-      startTransition(() => {
-        upsertTask(rejectedTask);
-        setSelectedTaskId(rejectedTask.id);
-        setError(undefined);
-      });
-    } catch (nextError: unknown) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Unable to reject the task."
-      );
-    } finally {
-      setActiveGovernanceId(undefined);
-    }
-  }
-
-  async function handleRevisionSubmit(taskId: string) {
-    const note = revisionDrafts[taskId]?.trim();
-
-    if (!note) {
-      return;
-    }
-
-    setActiveGovernanceId(taskId);
-
-    try {
-      const revisedTask = await reviseTask(taskId, note);
-
-      startTransition(() => {
-        upsertTask(revisedTask);
-        setSelectedTaskId(revisedTask.id);
-        setRevisionDrafts((current) => ({ ...current, [taskId]: "" }));
-        setError(undefined);
-      });
-    } catch (nextError: unknown) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Unable to submit the revision note."
+          : action === "approve"
+            ? "Unable to approve the task."
+            : action === "reject"
+              ? "Unable to reject the task."
+              : "Unable to submit the revision note."
       );
     } finally {
       setActiveGovernanceId(undefined);
@@ -347,6 +458,49 @@ export function App() {
           ? nextError.message
           : "Unable to replay the selected task snapshot."
       );
+    }
+  }
+
+  async function handleOperatorAction(
+    taskId: string,
+    action: OperatorActionType,
+    run: (taskId: string, note: string) => Promise<TaskConsoleRecord>
+  ) {
+    if (activeOperatorAction) {
+      return;
+    }
+
+    const note = operatorDrafts[taskId]?.trim();
+
+    if (!note) {
+      return;
+    }
+
+    if (action === "abandon" && !window.confirm("Abandon this task?")) {
+      return;
+    }
+
+    setActiveOperatorAction({ taskId, action });
+
+    try {
+      const nextTask = await run(taskId, note);
+
+      startTransition(() => {
+        upsertTask(nextTask);
+        setSelectedTaskId(nextTask.id);
+        setOperatorDrafts((current) => ({ ...current, [taskId]: "" }));
+        setError(undefined);
+      });
+
+      await refreshOperatorContext(taskId);
+    } catch (nextError: unknown) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Unable to execute the operator action."
+      );
+    } finally {
+      setActiveOperatorAction(undefined);
     }
   }
 
@@ -416,8 +570,45 @@ export function App() {
             setDraft((current) => ({ ...current, requiresApproval: checked }))
           }
         />
+        <OperatorQueuePanel
+          disabled={Boolean(activeOperatorAction)}
+          activeTaskId={selectedTask?.id}
+          onSelectTask={(taskId) => {
+            if (activeOperatorAction) {
+              return;
+            }
+
+            setSelectedTaskId(taskId);
+          }}
+          summary={operatorSummary}
+        />
         <TaskDetailPanel
           laneLabels={laneLabels}
+          operatorActions={selectedTaskOperatorActions}
+          operatorNote={selectedTask ? operatorDrafts[selectedTask.id] ?? "" : ""}
+          operatorPending={Boolean(activeOperatorAction)}
+          onOperatorNoteChange={(value) => {
+            if (!selectedTask) {
+              return;
+            }
+
+            setOperatorDrafts((current) => ({ ...current, [selectedTask.id]: value }));
+          }}
+          onRecover={() =>
+            selectedTask
+              ? handleOperatorAction(selectedTask.id, "recover", recoverTask)
+              : Promise.resolve()
+          }
+          onTakeover={() =>
+            selectedTask
+              ? handleOperatorAction(selectedTask.id, "takeover", takeoverTask)
+              : Promise.resolve()
+          }
+          onAbandon={() =>
+            selectedTask
+              ? handleOperatorAction(selectedTask.id, "abandon", abandonTask)
+              : Promise.resolve()
+          }
           onRevisionNoteChange={(value) => {
             if (!selectedTask) {
               return;
@@ -426,7 +617,13 @@ export function App() {
             setRevisionDrafts((current) => ({ ...current, [selectedTask.id]: value }));
           }}
           onSubmitRevision={() =>
-            selectedTask ? handleRevisionSubmit(selectedTask.id) : Promise.resolve()
+            selectedTask
+              ? handleGovernanceAction(
+                  selectedTask.id,
+                  "revise",
+                  revisionDrafts[selectedTask.id]?.trim()
+                )
+              : Promise.resolve()
           }
           revisionNote={selectedTask ? revisionDrafts[selectedTask.id] ?? "" : ""}
           revisionPending={activeGovernanceId === selectedTask?.id}
@@ -443,8 +640,7 @@ export function App() {
         <DiffInspectorPanel diffs={selectedTaskDiffs} />
         <ApprovalInboxPanel
           activeTaskId={activeGovernanceId}
-          onApprove={handleApprove}
-          onReject={handleReject}
+          onGovernanceAction={handleGovernanceAction}
           tasks={governanceTasks}
         />
         <AgentRegistryPanel agents={agents} />

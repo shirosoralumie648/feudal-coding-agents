@@ -261,6 +261,32 @@ describe("control-plane routes", () => {
     ).toBe("completed");
   });
 
+  it("approves a task via the unified governance route", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Build dashboard",
+        prompt: "Create the dashboard task",
+        allowMock: true,
+        requiresApproval: true,
+        sensitivity: "medium"
+      }
+    });
+
+    const approval = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/governance-actions/approve`
+    });
+
+    expect(approval.statusCode).toBe(200);
+    expect(approval.json().status).toBe("completed");
+    expect(approval.json().approvalRunId).toBeUndefined();
+    expect(approval.json().approvalRequest).toBeUndefined();
+  });
+
   it("returns 404 when approving an unknown task", async () => {
     const app = Fastify();
     registerAgentRoutes(app);
@@ -357,6 +383,101 @@ describe("control-plane routes", () => {
     expect(revised.json().governance.allowedActions).toEqual(["approve", "reject"]);
   });
 
+  it("accepts revision notes through the unified governance route", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Governance drill",
+        prompt: "Exercise the workflow #mock:needs_revision-once",
+        allowMock: true,
+        requiresApproval: false,
+        sensitivity: "high"
+      }
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json().status).toBe("needs_revision");
+
+    const revised = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/governance-actions/revise`,
+      payload: {
+        note: "tighten rollback scope."
+      }
+    });
+
+    expect(revised.statusCode).toBe(200);
+    expect(revised.json().status).toBe("awaiting_approval");
+    expect(revised.json().governance.allowedActions).toEqual(["approve", "reject"]);
+  });
+
+  it("returns 400 when the governance action type is invalid", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Build dashboard",
+        prompt: "Create the dashboard task",
+        allowMock: true,
+        requiresApproval: true,
+        sensitivity: "medium"
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/governance-actions/escalate`
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("returns 400 when revise note is empty through the unified governance route", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Governance drill",
+        prompt: "Exercise the workflow #mock:needs_revision-once",
+        allowMock: true,
+        requiresApproval: false,
+        sensitivity: "high"
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/governance-actions/revise`,
+      payload: {
+        note: "   "
+      }
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ message: "Revision note must not be empty" });
+  });
+
+  it("returns 404 when governing an unknown task via the unified route", async () => {
+    const app = Fastify();
+    registerAgentRoutes(app);
+    registerTaskRoutes(app);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tasks/missing-task/governance-actions/approve"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ message: "Task not found" });
+  });
+
   it("returns 409 for unsupported governance actions", async () => {
     const app = createApp();
 
@@ -375,6 +496,35 @@ describe("control-plane routes", () => {
     const response = await app.inject({
       method: "POST",
       url: `/api/tasks/${created.json().id}/revise`,
+      payload: {
+        note: "No-op revision"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: `Task ${created.json().id} does not allow revise`
+    });
+  });
+
+  it("returns 409 for unsupported governance actions through the unified route", async () => {
+    const app = createApp();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/tasks",
+      payload: {
+        title: "Fast path",
+        prompt: "Ship a low sensitivity task",
+        allowMock: false,
+        requiresApproval: false,
+        sensitivity: "low"
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/tasks/${created.json().id}/governance-actions/revise`,
       payload: {
         note: "No-op revision"
       }

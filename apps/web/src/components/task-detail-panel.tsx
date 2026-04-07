@@ -1,5 +1,7 @@
-import type { TaskRecord, TaskStatus } from "@feudal/contracts";
+import type { OperatorActionRecord, TaskStatus } from "@feudal/contracts";
+import type { TaskConsoleRecord } from "../lib/api";
 import { GovernancePanel } from "./governance-panel";
+import { OperatorConsolePanel } from "./operator-console-panel";
 import { RevisionPanel } from "./revision-panel";
 
 function formatArtifact(content: unknown): string {
@@ -18,16 +20,30 @@ function formatArtifact(content: unknown): string {
 
 interface TaskDetailPanelProps {
   laneLabels: Record<TaskStatus, string>;
+  operatorActions: OperatorActionRecord[];
+  operatorNote: string;
+  operatorPending: boolean;
+  onOperatorNoteChange: (value: string) => void;
+  onRecover: () => void | Promise<void>;
+  onTakeover: () => void | Promise<void>;
+  onAbandon: () => void | Promise<void>;
   onRevisionNoteChange: (value: string) => void;
   onSubmitRevision: () => void | Promise<void>;
   revisionNote: string;
   revisionPending: boolean;
-  selectedTask: TaskRecord | null;
+  selectedTask: TaskConsoleRecord | null;
 }
 
 export function TaskDetailPanel(props: TaskDetailPanelProps) {
   const {
     laneLabels,
+    operatorActions,
+    operatorNote,
+    operatorPending,
+    onOperatorNoteChange,
+    onRecover,
+    onTakeover,
+    onAbandon,
     onRevisionNoteChange,
     onSubmitRevision,
     revisionNote,
@@ -79,6 +95,16 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
           ) : null}
 
           <GovernancePanel task={selectedTask} />
+          <OperatorConsolePanel
+            actions={operatorActions}
+            isSubmitting={operatorPending}
+            note={operatorNote}
+            onAbandon={onAbandon}
+            onNoteChange={onOperatorNoteChange}
+            onRecover={onRecover}
+            onTakeover={onTakeover}
+            task={selectedTask}
+          />
           <RevisionPanel
             isSubmitting={revisionPending}
             note={revisionNote}

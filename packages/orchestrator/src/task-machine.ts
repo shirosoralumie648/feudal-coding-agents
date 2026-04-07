@@ -25,13 +25,11 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
   draft: { "task.submitted": "intake" },
   intake: {
     "intake.completed": "planning",
-    "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
   planning: {
     "planning.completed": "review",
-    "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
@@ -40,12 +38,12 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
     "review.approved_without_approval": "dispatching",
     "review.rejected": "rejected",
     "review.revision_requested": "needs_revision",
-    "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
   needs_revision: {
     "revision.submitted": "planning",
+    "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
   awaiting_approval: {
@@ -77,14 +75,14 @@ const transitions: Record<TaskStatus, Partial<Record<TaskEvent["type"], TaskStat
   },
   completed: {},
   partial_success: {},
+  abandoned: {},
   rejected: {},
   failed: {
     "operator.recovered": "dispatching",
     "operator.takeover_submitted": "planning",
     "operator.abandoned": "abandoned"
   },
-  rolled_back: {},
-  abandoned: {}
+  rolled_back: {}
 };
 
 export function transitionTask(task: TaskRecord, event: TaskEvent): TaskRecord {

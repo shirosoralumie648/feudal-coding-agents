@@ -5,15 +5,22 @@ import type {
   TaskStatus
 } from "@feudal/contracts";
 
-const TERMINAL_OR_CLOSED_STATUSES: TaskStatus[] = [
+const TERMINAL_STATUSES = new Set<TaskStatus>([
   "completed",
   "partial_success",
   "rejected",
   "rolled_back",
   "abandoned"
-];
+]);
 
-export function operatorAllowedActionsForTask(input: {
+export class OperatorActionNotAllowedError extends Error {
+  constructor(taskId: string, action: OperatorActionType) {
+    super(`Task ${taskId} does not allow operator action ${action}`);
+    this.name = "OperatorActionNotAllowedError";
+  }
+}
+
+export function allowedOperatorActionsForTask(input: {
   status: TaskStatus;
   recoveryState: RecoveryState;
 }): OperatorActionType[] {
@@ -21,7 +28,10 @@ export function operatorAllowedActionsForTask(input: {
 
   if (
     input.status === "failed" ||
-    input.recoveryState === "recovery_required"
+    (input.recoveryState === "recovery_required" &&
+      (input.status === "dispatching" ||
+        input.status === "executing" ||
+        input.status === "verifying"))
   ) {
     actions.push("recover");
   }
@@ -34,22 +44,31 @@ export function operatorAllowedActionsForTask(input: {
     actions.push("takeover");
   }
 
-  if (!TERMINAL_OR_CLOSED_STATUSES.includes(input.status)) {
+  if (!TERMINAL_STATUSES.has(input.status)) {
     actions.push("abandon");
   }
 
   return actions;
 }
 
-export function syncOperatorActions(
-  task: TaskRecord,
-  recoveryState: RecoveryState = "healthy"
-): TaskRecord {
+export function syncOperatorActions<T extends TaskRecord>(
+  task: T,
+  recoveryState: RecoveryState
+): T {
   return {
     ...task,
-    operatorAllowedActions: operatorAllowedActionsForTask({
+    operatorAllowedActions: allowedOperatorActionsForTask({
       status: task.status,
       recoveryState
     })
   };
+}
+
+export function assertOperatorActionAllowed(
+  task: Pick<TaskRecord, "id" | "operatorAllowedActions">,
+  action: OperatorActionType
+) {
+  if (!task.operatorAllowedActions.includes(action)) {
+    throw new OperatorActionNotAllowedError(task.id, action);
+  }
 }

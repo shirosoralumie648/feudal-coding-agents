@@ -64,50 +64,76 @@ describe("transitionTask", () => {
     ).toThrow("Illegal transition");
   });
 
-  it("routes operator recover, takeover, and abandon transitions", () => {
-    expect(
-      transitionTask(
-        { ...baseTask, status: "failed", operatorAllowedActions: ["recover"] },
-        { type: "operator.recovered" }
-      ).status
-    ).toBe("dispatching");
+  it("routes failed task recovery back to dispatching", () => {
+    const failedTask = { ...baseTask, status: "failed" as const };
 
-    expect(
-      transitionTask(
-        {
-          ...baseTask,
-          status: "awaiting_approval",
-          operatorAllowedActions: ["takeover"]
-        },
-        { type: "operator.takeover_submitted" }
-      ).status
-    ).toBe("planning");
-
-    expect(
-      transitionTask(
-        { ...baseTask, status: "review", operatorAllowedActions: ["abandon"] },
-        { type: "operator.abandoned" }
-      ).status
-    ).toBe("abandoned");
+    expect(transitionTask(failedTask, { type: "operator.recovered" }).status).toBe(
+      "dispatching"
+    );
   });
 
-  it("allows recovery transitions from interrupted in-flight states", () => {
-    expect(
-      transitionTask(
-        { ...baseTask, status: "planning", operatorAllowedActions: ["recover"] },
-        { type: "operator.recovered" }
-      ).status
-    ).toBe("dispatching");
+  it("routes executing task recovery back to dispatching", () => {
+    const executingTask = { ...baseTask, status: "executing" as const };
 
     expect(
-      transitionTask(
-        {
-          ...baseTask,
-          status: "dispatching",
-          operatorAllowedActions: ["takeover"]
-        },
-        { type: "operator.takeover_submitted" }
-      ).status
+      transitionTask(executingTask, { type: "operator.recovered" }).status
+    ).toBe("dispatching");
+  });
+
+  it("routes dispatching task recovery back to dispatching", () => {
+    const dispatchingTask = { ...baseTask, status: "dispatching" as const };
+
+    expect(
+      transitionTask(dispatchingTask, { type: "operator.recovered" }).status
+    ).toBe("dispatching");
+  });
+
+  it("routes verifying task recovery back to dispatching", () => {
+    const verifyingTask = { ...baseTask, status: "verifying" as const };
+
+    expect(
+      transitionTask(verifyingTask, { type: "operator.recovered" }).status
+    ).toBe("dispatching");
+  });
+
+  it("routes takeover submissions from awaiting approval to planning", () => {
+    const awaitingTask = { ...baseTask, status: "awaiting_approval" as const };
+
+    expect(
+      transitionTask(awaitingTask, { type: "operator.takeover_submitted" }).status
     ).toBe("planning");
+  });
+
+  it.each([
+    "intake",
+    "planning",
+    "review",
+    "dispatching",
+    "awaiting_approval",
+    "executing",
+    "verifying",
+    "failed",
+    "needs_revision"
+  ] as const)("routes takeover submissions from %s to planning", (status) => {
+    expect(
+      transitionTask({ ...baseTask, status }, { type: "operator.takeover_submitted" })
+        .status
+    ).toBe("planning");
+  });
+
+  it.each([
+    "intake",
+    "planning",
+    "review",
+    "awaiting_approval",
+    "dispatching",
+    "executing",
+    "verifying",
+    "failed",
+    "needs_revision"
+  ] as const)("routes abandon requests from %s to abandoned", (status) => {
+    expect(
+      transitionTask({ ...baseTask, status }, { type: "operator.abandoned" }).status
+    ).toBe("abandoned");
   });
 });

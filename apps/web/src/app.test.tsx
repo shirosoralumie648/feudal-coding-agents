@@ -1,6 +1,14 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import type { ACPAgentManifest } from "@feudal/acp";
-import type { TaskRecord } from "@feudal/contracts";
+import type { OperatorActionRecord, OperatorActionSummary, TaskRecord } from "@feudal/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./app";
 
@@ -89,6 +97,16 @@ function mockConsoleApi(options?: {
   approvedTask?: TaskRecord;
   rejectedTask?: TaskRecord;
   revisedTask?: TaskRecord;
+  operatorActions?: OperatorActionRecord[];
+  operatorActionsByTaskId?: Record<string, OperatorActionRecord[]>;
+  operatorSummary?: OperatorActionSummary;
+  takenOverTask?: TaskRecord;
+  takenOverResponse?: Promise<Response>;
+  recoveredTask?: TaskRecord;
+  abandonedTask?: TaskRecord;
+  failOperatorActionsInitially?: boolean;
+  failOperatorSummaryInitially?: boolean;
+  failOperatorSummaryAfterFirst?: boolean;
   recoverySummary?: {
     tasksNeedingRecovery: number;
     runsNeedingRecovery: number;
@@ -104,6 +122,8 @@ function mockConsoleApi(options?: {
 }) {
   const agents = options?.agents ?? defaultAgents;
   let tasks = options?.initialTasks ?? [defaultTask];
+  const operatorActionRequests = new Map<string, number>();
+  let operatorSummaryRequests = 0;
 
   const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
@@ -111,6 +131,16 @@ function mockConsoleApi(options?: {
     const taskEventMatch = url.match(/\/api\/tasks\/([^/]+)\/events$/);
     const taskDiffMatch = url.match(/\/api\/tasks\/([^/]+)\/diffs$/);
     const taskReplayMatch = url.match(/\/api\/tasks\/([^/]+)\/replay/);
+    const taskOperatorActionsMatch = url.match(/\/api\/tasks\/([^/]+)\/operator-actions$/);
+    const taskTakeoverMatch = url.match(
+      /\/api\/tasks\/([^/]+)\/operator-actions\/takeover$/
+    );
+    const taskRecoverMatch = url.match(
+      /\/api\/tasks\/([^/]+)\/operator-actions\/recover$/
+    );
+    const taskAbandonMatch = url.match(
+      /\/api\/tasks\/([^/]+)\/operator-actions\/abandon$/
+    );
 
     if (url.endsWith("/api/tasks") && method === "GET") {
       return options?.tasksResponse ?? json(tasks);
@@ -125,6 +155,39 @@ function mockConsoleApi(options?: {
         options?.recoverySummary ?? {
           tasksNeedingRecovery: 0,
           runsNeedingRecovery: 0
+        }
+      );
+    }
+
+    if (taskOperatorActionsMatch && method === "GET") {
+      const taskId = taskOperatorActionsMatch[1];
+      const nextCount = (operatorActionRequests.get(taskId) ?? 0) + 1;
+      operatorActionRequests.set(taskId, nextCount);
+
+      if (options?.failOperatorActionsInitially && nextCount === 1) {
+        return Promise.reject(new Error("Operator history unavailable"));
+      }
+
+      return json(
+        options?.operatorActionsByTaskId?.[taskId] ?? options?.operatorActions ?? []
+      );
+    }
+
+    if (url.endsWith("/api/operator-actions/summary") && method === "GET") {
+      operatorSummaryRequests += 1;
+
+      if (options?.failOperatorSummaryInitially && operatorSummaryRequests === 1) {
+        return Promise.reject(new Error("Operator summary unavailable"));
+      }
+
+      if (options?.failOperatorSummaryAfterFirst && operatorSummaryRequests > 1) {
+        return Promise.reject(new Error("Operator summary unavailable"));
+      }
+
+      return json(
+        options?.operatorSummary ?? {
+          tasksNeedingOperatorAttention: 0,
+          tasks: []
         }
       );
     }
@@ -149,7 +212,10 @@ function mockConsoleApi(options?: {
       return json(createdTask, 201);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/approve`) && method === "POST") {
+    if (
+      url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/approve`) &&
+      method === "POST"
+    ) {
       const approvedTask =
         options?.approvedTask ??
         ({
@@ -199,7 +265,10 @@ function mockConsoleApi(options?: {
       return json(approvedTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/reject`) && method === "POST") {
+    if (
+      url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/reject`) &&
+      method === "POST"
+    ) {
       const rejectedTask =
         options?.rejectedTask ??
         ({
@@ -222,10 +291,56 @@ function mockConsoleApi(options?: {
       return json(rejectedTask);
     }
 
-    if (url.endsWith(`/api/tasks/${defaultTask.id}/revise`) && method === "POST") {
+    if (
+      url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/revise`) &&
+      method === "POST"
+    ) {
       const revisedTask = options?.revisedTask ?? defaultTask;
       tasks = tasks.map((task) => (task.id === revisedTask.id ? revisedTask : task));
       return json(revisedTask);
+    }
+
+    if (taskTakeoverMatch && method === "POST") {
+      const taskId = taskTakeoverMatch[1];
+      const currentTask = tasks.find((task) => task.id === taskId) ?? defaultTask;
+      const takenOverTask =
+        options?.takenOverTask ??
+        ({
+          ...currentTask,
+          operatorAllowedActions: ["takeover", "abandon"]
+        } satisfies TaskRecord);
+      tasks = tasks.map((task) => (task.id === takenOverTask.id ? takenOverTask : task));
+      return options?.takenOverResponse ?? json(takenOverTask);
+    }
+
+    if (taskRecoverMatch && method === "POST") {
+      const taskId = taskRecoverMatch[1];
+      const currentTask = tasks.find((task) => task.id === taskId) ?? defaultTask;
+      const recoveredTask =
+        options?.recoveredTask ??
+        ({
+          ...currentTask,
+          status: "completed",
+          operatorAllowedActions: []
+        } satisfies TaskRecord);
+      tasks = tasks.map((task) => (task.id === recoveredTask.id ? recoveredTask : task));
+      return json(recoveredTask);
+    }
+
+    if (taskAbandonMatch && method === "POST") {
+      const taskId = taskAbandonMatch[1];
+      const currentTask = tasks.find((task) => task.id === taskId) ?? defaultTask;
+      const abandonedTask =
+        options?.abandonedTask ??
+        ({
+          ...currentTask,
+          status: "abandoned",
+          operatorAllowedActions: [],
+          approvalRequest: undefined,
+          approvalRunId: undefined
+        } satisfies TaskRecord);
+      tasks = tasks.map((task) => (task.id === abandonedTask.id ? abandonedTask : task));
+      return json(abandonedTask);
     }
 
     throw new Error(`Unexpected fetch for ${method} ${url}`);
@@ -286,7 +401,7 @@ describe("App", () => {
     ).toBeVisible();
     expect(await screen.findByText("Verifier accepted the work.")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/tasks/task-1/approve",
+      "/api/tasks/task-1/governance-actions/approve",
       expect.objectContaining({ method: "POST" })
     );
   });
@@ -303,7 +418,7 @@ describe("App", () => {
     ).toBeVisible();
     expect(await screen.findByText("approval.rejected")).toBeVisible();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/tasks/task-1/reject",
+      "/api/tasks/task-1/governance-actions/reject",
       expect.objectContaining({ method: "POST" })
     );
   });
@@ -538,10 +653,530 @@ describe("App", () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        `/api/tasks/${defaultTask.id}/revise`,
+        `/api/tasks/${defaultTask.id}/governance-actions/revise`,
         expect.objectContaining({ method: "POST" })
       )
     );
     expect(await screen.findByText("Approve the decision brief?")).toBeVisible();
+  });
+
+  it("fails closed when governance actions drift from the approval request", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject"]
+          },
+          governance: {
+            ...defaultTask.governance,
+            allowedActions: ["approve"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Governance action state is out of sync.")
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Approve Build dashboard" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reject Build dashboard" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("fails closed when approval request contains an extra unexpected action", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject", "revise"]
+          },
+          governance: {
+            ...defaultTask.governance,
+            allowedActions: ["approve", "reject"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(
+      await screen.findByText("Governance action state is out of sync.")
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Approve Build dashboard" })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reject Build dashboard" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps awaiting approval tasks visible when governance inline actions are empty", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject"]
+          },
+          governance: {
+            ...defaultTask.governance,
+            allowedActions: []
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
+    const inboxSection = inboxPanel.closest("section");
+    expect(inboxSection).not.toBeNull();
+    expect(within(inboxSection as HTMLElement).getByText("Build dashboard")).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).getByText(
+        "Governance action state is out of sync."
+      )
+    ).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Approve Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Reject Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+  });
+
+  it("fails closed when approval request is missing but governance advertises approve/reject", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          approvalRequest: undefined,
+          governance: {
+            ...defaultTask.governance,
+            allowedActions: ["approve", "reject"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
+    const inboxSection = inboxPanel.closest("section");
+    expect(inboxSection).not.toBeNull();
+    expect(within(inboxSection as HTMLElement).getByText("Build dashboard")).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).getByText(
+        "Governance action state is out of sync."
+      )
+    ).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Approve Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Reject Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+  });
+
+  it("fails closed when governance is missing but approval actions are still advertised", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          status: "awaiting_approval",
+          governance: undefined,
+          approvalRequest: {
+            ...defaultTask.approvalRequest,
+            actions: ["approve", "reject"]
+          }
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
+    const inboxSection = inboxPanel.closest("section");
+    expect(inboxSection).not.toBeNull();
+    expect(within(inboxSection as HTMLElement).getByText("Build dashboard")).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).getByText(
+        "Governance action state is out of sync."
+      )
+    ).toBeVisible();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Approve Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      within(inboxSection as HTMLElement).queryByRole("button", {
+        name: "Reject Build dashboard"
+      })
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the operator queue when the API reports operator attention", async () => {
+    mockConsoleApi({
+      recoverySummary: {
+        tasksNeedingRecovery: 1,
+        runsNeedingRecovery: 0
+      },
+      operatorSummary: {
+        tasksNeedingOperatorAttention: 1,
+        tasks: [
+          {
+            id: defaultTask.id,
+            title: defaultTask.title,
+            status: "failed",
+            recoveryState: "healthy",
+            operatorAllowedActions: ["recover", "takeover", "abandon"]
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Operator Queue" })).toBeVisible();
+    expect(await screen.findByText("recover / takeover / abandon")).toBeVisible();
+  });
+
+  it("keeps loading the console when operator summary is unavailable at startup", async () => {
+    mockConsoleApi({ failOperatorSummaryInitially: true });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 3,
+        name: defaultTask.title
+      })
+    ).toBeVisible();
+    expect(screen.queryByText("Operator summary unavailable")).not.toBeInTheDocument();
+  });
+
+  it("retries operator summary after a transient startup failure", async () => {
+    const secondTask: TaskRecord = {
+      ...defaultTask,
+      id: "task-2",
+      title: "Recover runner",
+      status: "failed",
+      approvalRunId: undefined,
+      approvalRequest: undefined,
+      governance: undefined,
+      operatorAllowedActions: ["recover", "takeover", "abandon"]
+    };
+
+    mockConsoleApi({
+      initialTasks: [defaultTask, secondTask],
+      failOperatorSummaryInitially: true,
+      operatorSummary: {
+        tasksNeedingOperatorAttention: 1,
+        tasks: [
+          {
+            id: secondTask.id,
+            title: secondTask.title,
+            status: secondTask.status,
+            recoveryState: "healthy",
+            operatorAllowedActions: ["recover", "takeover", "abandon"]
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Recover runner")).toBeVisible(), {
+      timeout: 2_500
+    });
+    const queuePanel = screen.getByRole("heading", { name: "Operator Queue" }).closest("section");
+    expect(queuePanel).not.toBeNull();
+    expect(within(queuePanel as HTMLElement).getByText("1 waiting")).toBeVisible();
+  });
+
+  it("submits an operator takeover note from task detail", async () => {
+    const fetchMock = mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover", "abandon"]
+        }
+      ],
+      operatorActions: [
+        {
+          id: 1,
+          taskId: defaultTask.id,
+          actionType: "takeover",
+          status: "applied",
+          note: "Re-plan this task.",
+          actorType: "user",
+          createdAt: "2026-04-05T00:00:00.000Z",
+          appliedAt: "2026-04-05T00:00:01.000Z"
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const noteField = await screen.findByLabelText("Operator note");
+    fireEvent.change(noteField, { target: { value: "Re-plan this task." } });
+    fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/tasks/${defaultTask.id}/operator-actions/takeover`,
+        expect.objectContaining({
+          method: "POST"
+        })
+      )
+    );
+  });
+
+  it("requires confirmation for abandon before posting", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["abandon"]
+        }
+      ]
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Operator note"), {
+      target: { value: "Stop this task." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Abandon task" }));
+
+    await waitFor(() =>
+      expect(fetchMock).not.toHaveBeenCalledWith(
+        `/api/tasks/${defaultTask.id}/operator-actions/abandon`,
+        expect.anything()
+      )
+    );
+    expect(confirmSpy).toHaveBeenCalledWith("Abandon this task?");
+  });
+
+  it("keeps operator history visible when no actions are currently allowed", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: []
+        }
+      ],
+      operatorActionsByTaskId: {
+        [defaultTask.id]: [
+          {
+            id: 2,
+            taskId: defaultTask.id,
+            actionType: "takeover",
+            status: "applied",
+            note: "Already re-planned this task.",
+            actorType: "user",
+            createdAt: "2026-04-05T00:10:00.000Z",
+            appliedAt: "2026-04-05T00:10:01.000Z"
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Operator Console" })).toBeVisible();
+    expect(screen.getByText("takeover / applied")).toBeVisible();
+    expect(screen.queryByLabelText("Operator note")).not.toBeInTheDocument();
+  });
+
+  it("retries initial operator history loads after a transient failure", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: []
+        }
+      ],
+      failOperatorActionsInitially: true,
+      operatorActionsByTaskId: {
+        [defaultTask.id]: [
+          {
+            id: 3,
+            taskId: defaultTask.id,
+            actionType: "takeover",
+            status: "applied",
+            note: "Recovered the operator history after retry.",
+            actorType: "user",
+            createdAt: "2026-04-05T00:20:00.000Z",
+            appliedAt: "2026-04-05T00:20:01.000Z"
+          }
+        ]
+      }
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Operator Console" })).toBeVisible();
+    expect(
+      await screen.findByText("Recovered the operator history after retry.")
+    ).toBeVisible();
+    expect(screen.queryByText("Operator history unavailable")).not.toBeInTheDocument();
+  });
+
+  it("disables operator actions until a non-empty note is present", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover"]
+        }
+      ]
+    });
+
+    render(<App />);
+
+    const noteField = await screen.findByLabelText("Operator note");
+    const takeoverButton = screen.getByRole("button", { name: "Take over task" });
+
+    expect(takeoverButton).toBeDisabled();
+
+    fireEvent.change(noteField, { target: { value: "   " } });
+    expect(takeoverButton).toBeDisabled();
+
+    fireEvent.change(noteField, { target: { value: "Re-plan with a tighter scope." } });
+    expect(takeoverButton).toBeEnabled();
+  });
+
+  it("keeps the current task selected while an operator action is pending", async () => {
+    const secondTask: TaskRecord = {
+      ...defaultTask,
+      id: "task-2",
+      title: "Recover runner",
+      status: "failed",
+      approvalRunId: undefined,
+      approvalRequest: undefined,
+      operatorAllowedActions: ["recover", "takeover", "abandon"]
+    };
+    const takeoverResponse = deferred<Response>();
+
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover"]
+        },
+        secondTask
+      ],
+      operatorSummary: {
+        tasksNeedingOperatorAttention: 2,
+        tasks: [
+          {
+            id: defaultTask.id,
+            title: defaultTask.title,
+            status: "awaiting_approval",
+            recoveryState: "healthy",
+            operatorAllowedActions: ["takeover"]
+          },
+          {
+            id: secondTask.id,
+            title: secondTask.title,
+            status: "failed",
+            recoveryState: "healthy",
+            operatorAllowedActions: ["recover", "takeover", "abandon"]
+          }
+        ]
+      },
+      takenOverResponse: takeoverResponse.promise
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Operator note"), {
+      target: { value: "Re-plan this task." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
+
+    const queueButtons = await screen.findAllByRole("button", { name: "Open task" });
+    expect(queueButtons[1]).toBeDisabled();
+    fireEvent.click(queueButtons[1]!);
+
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: defaultTask.title
+      })
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", {
+        level: 3,
+        name: secondTask.title
+      })
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      takeoverResponse.resolve(
+        await json({
+          ...defaultTask,
+          operatorAllowedActions: ["takeover", "abandon"]
+        })
+      );
+    });
+  });
+
+  it("keeps a successful operator action from surfacing auxiliary refresh errors", async () => {
+    const fetchMock = mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover"]
+        }
+      ],
+      failOperatorSummaryAfterFirst: true
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Operator note"), {
+      target: { value: "Re-plan this task." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/tasks/${defaultTask.id}/operator-actions/takeover`,
+        expect.objectContaining({
+          method: "POST"
+        })
+      )
+    );
+    await waitFor(() =>
+      expect((screen.getByLabelText("Operator note") as HTMLTextAreaElement).value).toBe("")
+    );
+    expect(screen.queryByText("Operator summary unavailable")).not.toBeInTheDocument();
   });
 });

@@ -7,7 +7,11 @@ import type {
 import { createMockACPClient } from "@feudal/acp/mock-client";
 import { TaskRecordSchema } from "@feudal/contracts";
 import { createTaskRunGateway } from "./task-run-gateway";
-import { createOrchestratorService } from "./orchestrator-service";
+import {
+  ActionNotAllowedError,
+  createOrchestratorService
+} from "./orchestrator-service";
+import type { TaskProjectionRecord } from "../persistence/task-read-model";
 import { MemoryTaskStore } from "../store";
 
 class RecordingTaskStore extends MemoryTaskStore {
@@ -18,6 +22,316 @@ class RecordingTaskStore extends MemoryTaskStore {
   override async saveTask(task, eventType, expectedVersion) {
     this.eventLog.push(`save:${eventType}:${task.status}:${expectedVersion}`);
     return super.saveTask(task, eventType, expectedVersion);
+  }
+}
+
+class StaleRecoveryTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-stale-recovery") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Stale recovery task",
+      prompt: "Resume the stale recovery task",
+      status: "executing",
+      artifacts: [],
+      history: [
+        {
+          status: "executing",
+          at: "2026-04-05T00:00:00.000Z",
+          note: "Recovered executing task requires operator review"
+        }
+      ],
+      runIds: [],
+      runs: [],
+      operatorAllowedActions: [],
+      createdAt: "2026-04-05T00:00:00.000Z",
+      updatedAt: "2026-04-05T00:00:00.000Z",
+      recoveryState: "recovery_required",
+      recoveryReason: "Recovered executing task requires operator review",
+      latestEventId: 0,
+      latestProjectionVersion: 0
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class FailingRecoverPersistStore extends MemoryTaskStore {
+  override async saveTask(task, eventType, expectedVersion) {
+    if (eventType === "task.operator_recovered") {
+      throw new Error("simulated save failure");
+    }
+
+    return super.saveTask(task, eventType, expectedVersion);
+  }
+}
+
+class MismatchedApprovalTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-mismatch") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Mismatched approval task",
+      prompt: "Approve the mismatched task",
+      status: "awaiting_approval",
+      artifacts: [],
+      history: [
+        {
+          status: "awaiting_approval",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "review.approved"
+        }
+      ],
+      runIds: ["run-approval"],
+      approvalRunId: "run-approval",
+      runs: [
+        {
+          id: "run-approval",
+          agent: "approval-gate",
+          status: "awaiting",
+          phase: "approval",
+          awaitPrompt: "Approve the decision brief?",
+          allowedActions: ["reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["reject"]
+      },
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["approve", "reject"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: ["abandon"],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class GovernanceDisallowApprovalTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-governance-disallow") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Governance disallow task",
+      prompt: "Approve despite governance drift",
+      status: "awaiting_approval",
+      artifacts: [],
+      history: [
+        {
+          status: "awaiting_approval",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "review.approved"
+        }
+      ],
+      runIds: ["run-approval"],
+      approvalRunId: "run-approval",
+      runs: [
+        {
+          id: "run-approval",
+          agent: "approval-gate",
+          status: "awaiting",
+          phase: "approval",
+          awaitPrompt: "Approve the decision brief?",
+          allowedActions: ["approve", "reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      },
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["reject"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: ["abandon"],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class EmptyGovernanceActionsCompatStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    const task = await super.getTask(taskId);
+
+    if (!task || taskId !== "task-legacy-empty-governance") {
+      return task;
+    }
+
+    return {
+      ...task,
+      governance: task.governance
+        ? {
+            ...task.governance,
+            allowedActions: []
+          }
+        : task.governance
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class MissingApprovalRequestCompatStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    const task = await super.getTask(taskId);
+
+    if (!task || taskId !== "task-legacy-missing-approval-request") {
+      return task;
+    }
+
+    return {
+      ...task,
+      approvalRequest: undefined
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class EmptyApprovalRequestActionsCompatStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    const task = await super.getTask(taskId);
+
+    if (!task || taskId !== "task-empty-approval-actions") {
+      return task;
+    }
+
+    return {
+      ...task,
+      approvalRequest: task.approvalRequest
+        ? {
+            ...task.approvalRequest,
+            actions: []
+          }
+        : task.approvalRequest
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class StaleApprovalStateTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-stale-approval-state") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Stale approval state task",
+      prompt: "Reject stale approval state",
+      status: "executing",
+      artifacts: [],
+      history: [
+        {
+          status: "executing",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "task.execution_started"
+        }
+      ],
+      runIds: ["run-stale-approval"],
+      approvalRunId: "run-stale-approval",
+      runs: [
+        {
+          id: "run-stale-approval",
+          agent: "approval-gate",
+          status: "awaiting",
+          phase: "approval",
+          awaitPrompt: "Approve the decision brief?",
+          allowedActions: ["approve", "reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-stale-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      },
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["approve", "reject"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: ["abandon"],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class StaleRevisePositiveDriftTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-stale-revise-drift") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Stale revise drift task",
+      prompt: "Revise should be disallowed for completed tasks",
+      status: "completed",
+      artifacts: [],
+      history: [
+        {
+          status: "completed",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "task.completed"
+        }
+      ],
+      runIds: [],
+      runs: [],
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["revise"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: [],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
   }
 }
 
@@ -169,6 +483,149 @@ describe("orchestrator service durability", () => {
     expect(revised.governance?.reviewVerdict).toBe("approved");
     expect(revised.governance?.allowedActions).toEqual(["approve", "reject"]);
     expect(revised.revisionRequest).toBeUndefined();
+  });
+
+  it("submits approve and revise through the unified governance dispatcher", async () => {
+    const service = createServiceWithGateway();
+    const approvalTask = await service.createTask({
+      id: "task-governance-approve",
+      title: "Approval task",
+      prompt: "Approve this task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const approved = await service.submitGovernanceAction(
+      approvalTask.id,
+      "approve"
+    );
+
+    expect(approved.status).toBe("completed");
+
+    const revisionTask = await service.createTask({
+      id: "task-governance-revise",
+      title: "Revision task",
+      prompt: "Exercise governance #mock:needs_revision-once",
+      allowMock: true,
+      requiresApproval: false,
+      sensitivity: "high"
+    });
+
+    const revised = await service.submitGovernanceAction(
+      revisionTask.id,
+      "revise",
+      "Tighten rollback scope and re-run review."
+    );
+
+    expect(revised.status).toBe("awaiting_approval");
+    expect(revised.governance?.revisionCount).toBe(1);
+  });
+
+  it("rejects approval actions when approvalRequest.actions drift from governance.allowedActions", async () => {
+    const service = createServiceWithGateway({
+      store: new MismatchedApprovalTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-mismatch", "approve")
+    ).rejects.toThrow("Task task-mismatch does not allow approve");
+  });
+
+  it("rejects approval actions when stored governance.allowedActions disallows approve", async () => {
+    const service = createServiceWithGateway({
+      store: new GovernanceDisallowApprovalTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-governance-disallow", "approve")
+    ).rejects.toThrow("Task task-governance-disallow does not allow approve");
+  });
+
+  it("allows approval compatibility path when governance.allowedActions is the legacy empty default", async () => {
+    const service = createServiceWithGateway({
+      store: new EmptyGovernanceActionsCompatStore()
+    });
+    const created = await service.createTask({
+      id: "task-legacy-empty-governance",
+      title: "Legacy empty governance action task",
+      prompt: "Approve despite empty governance actions",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const approved = await service.submitGovernanceAction(created.id, "approve");
+
+    expect(approved.status).toBe("completed");
+  });
+
+  it("allows approval compatibility path when approvalRequest metadata is missing", async () => {
+    const service = createServiceWithGateway({
+      store: new MissingApprovalRequestCompatStore()
+    });
+    const created = await service.createTask({
+      id: "task-legacy-missing-approval-request",
+      title: "Legacy missing approval request task",
+      prompt: "Approve despite missing approval request",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const approved = await service.submitGovernanceAction(created.id, "approve");
+
+    expect(approved.status).toBe("completed");
+  });
+
+  it("rejects approval when approvalRequest is present but has empty actions metadata", async () => {
+    const service = createServiceWithGateway({
+      store: new EmptyApprovalRequestActionsCompatStore()
+    });
+    const created = await service.createTask({
+      id: "task-empty-approval-actions",
+      title: "Empty approval actions task",
+      prompt: "Approval request with empty actions should fail closed",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    await expect(
+      service.submitGovernanceAction(created.id, "approve")
+    ).rejects.toThrow("Task task-empty-approval-actions does not allow approve");
+  });
+
+  it("rejects stale non-awaiting approval tasks before attempting respondToAwait", async () => {
+    const events: string[] = [];
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: createRecordingACPClient(events),
+        mockClient: createMockACPClient()
+      }),
+      store: new StaleApprovalStateTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-stale-approval-state", "approve")
+    ).rejects.toBeInstanceOf(ActionNotAllowedError);
+    await expect(
+      service.submitGovernanceAction("task-stale-approval-state", "approve")
+    ).rejects.toThrow("Task task-stale-approval-state does not allow approve");
+    expect(events.some((event) => event.startsWith("respond:"))).toBe(false);
+  });
+
+  it("rejects stale positive revise drift before transition handling", async () => {
+    const service = createServiceWithGateway({
+      store: new StaleRevisePositiveDriftTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-stale-revise-drift", "revise", "retry")
+    ).rejects.toBeInstanceOf(ActionNotAllowedError);
+    await expect(
+      service.submitGovernanceAction("task-stale-revise-drift", "revise", "retry")
+    ).rejects.toThrow("Task task-stale-revise-drift does not allow revise");
   });
 
   it("uses createTaskRunGatewayFromEnv to run allowMock=false tasks in mock mode", async () => {
@@ -390,7 +847,9 @@ describe("orchestrator service durability", () => {
     expect(takenOver.approvalRunId).not.toBe("run-approval-old");
     expect(takenOver.approvalRequest?.actions).toEqual(["approve", "reject"]);
     expect(
-      takenOver.history.some((entry) => entry.note.includes("Operator takeover note"))
+      takenOver.history.some((entry) =>
+        entry.note.includes("Re-plan around the new rollback constraints.")
+      )
     ).toBe(true);
   });
 
@@ -431,6 +890,218 @@ describe("orchestrator service durability", () => {
 
     await expect(
       service.recoverTask("task-operator-service", "Retry anyway")
-    ).rejects.toThrow("does not allow recover");
+    ).rejects.toThrow("does not allow operator action recover");
+  });
+});
+
+describe("orchestrator service operator actions", () => {
+  it("recovers a failed task and records requested/applied operator history", async () => {
+    const store = new MemoryTaskStore();
+    const failingClient: ACPClient = {
+      ...createMockACPClient(),
+      async runAgent(input) {
+        if (input.agent === "gongbu-executor") {
+          throw new Error("executor unavailable");
+        }
+
+        return createMockACPClient().runAgent(input);
+      }
+    };
+    const failingService = createServiceWithGateway({
+      realClient: failingClient,
+      store
+    });
+
+    const failed = await failingService.createTask({
+      id: "task-recover",
+      title: "Recover executor",
+      prompt: "Retry execution",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(failed.status).toBe("failed");
+
+    const recovered = await createServiceWithGateway({ store }).recoverTask(
+      failed.id,
+      "Retry after restoring the executor."
+    );
+
+    expect(recovered.status).toBe("completed");
+    await expect(store.listOperatorActions(failed.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" }),
+      expect.objectContaining({ actionType: "recover", status: "applied" })
+    ]);
+  });
+
+  it("takes over an awaiting approval task and re-enters planning with a note", async () => {
+    const store = new MemoryTaskStore();
+    const service = createServiceWithGateway({ store });
+
+    const created = await service.createTask({
+      id: "task-takeover",
+      title: "Take over task",
+      prompt: "Re-plan this task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    expect(created.status).toBe("awaiting_approval");
+
+    const takenOver = await service.takeoverTask(
+      created.id,
+      "Add the operator note and re-run planning."
+    );
+
+    expect(takenOver.status).toBe("awaiting_approval");
+    expect(
+      takenOver.history.some((entry) =>
+        entry.note.includes("task.operator_takeover_submitted")
+      )
+    ).toBe(true);
+    expect(takenOver.approvalRequest).toBeDefined();
+  });
+
+  it("abandons an in-flight task and clears approval state", async () => {
+    const service = createServiceWithGateway();
+    const created = await service.createTask({
+      id: "task-abandon",
+      title: "Abandon task",
+      prompt: "Stop this task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const abandoned = await service.abandonTask(
+      created.id,
+      "Operator chose to stop this task."
+    );
+
+    expect(abandoned.status).toBe("abandoned");
+    expect(abandoned.approvalRequest).toBeUndefined();
+    expect(abandoned.operatorAllowedActions).toEqual([]);
+  });
+
+  it("records rejected operator history when an action is not allowed", async () => {
+    const store = new MemoryTaskStore();
+    const service = createServiceWithGateway({ store });
+    const created = await service.createTask({
+      id: "task-reject-operator",
+      title: "Reject operator action",
+      prompt: "Finish this task",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(created.status).toBe("completed");
+
+    await expect(
+      service.recoverTask(created.id, "Retry a task that has already completed.")
+    ).rejects.toThrow();
+    await expect(store.listOperatorActions(created.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" }),
+      expect.objectContaining({ actionType: "recover", status: "rejected" })
+    ]);
+  });
+
+  it("recomputes operator actions before validating recovery-required tasks", async () => {
+    const store = new StaleRecoveryTaskStore();
+    const service = createServiceWithGateway({ store });
+
+    const recovered = await service.recoverTask(
+      "task-stale-recovery",
+      "Resume execution after rebuild."
+    );
+
+    expect(recovered.status).toBe("completed");
+    await expect(store.listOperatorActions("task-stale-recovery")).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" }),
+      expect.objectContaining({ actionType: "recover", status: "applied" })
+    ]);
+  });
+
+  it("does not record applied operator history when persisting the recovery transition fails", async () => {
+    const store = new FailingRecoverPersistStore();
+    const failingClient: ACPClient = {
+      ...createMockACPClient(),
+      async runAgent(input) {
+        if (input.agent === "gongbu-executor") {
+          throw new Error("executor unavailable");
+        }
+
+        return createMockACPClient().runAgent(input);
+      }
+    };
+    const failingService = createServiceWithGateway({
+      realClient: failingClient,
+      store
+    });
+    const service = createServiceWithGateway({ store });
+
+    const failed = await failingService.createTask({
+      id: "task-persist-ordering",
+      title: "Persist ordering task",
+      prompt: "Fail then recover",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(failed.status).toBe("failed");
+
+    await expect(
+      service.recoverTask(failed.id, "Retry after fixing the persistence layer.")
+    ).rejects.toThrow("simulated save failure");
+    await expect(store.listOperatorActions(failed.id)).resolves.toEqual([
+      expect.objectContaining({ actionType: "recover", status: "requested" })
+    ]);
+  });
+
+  it("summarizes only tasks that need operator attention", async () => {
+    const store = new MemoryTaskStore();
+    const failingClient: ACPClient = {
+      ...createMockACPClient(),
+      async runAgent(input) {
+        if (input.agent === "gongbu-executor") {
+          throw new Error("executor unavailable");
+        }
+
+        return createMockACPClient().runAgent(input);
+      }
+    };
+    const failingService = createServiceWithGateway({
+      realClient: failingClient,
+      store
+    });
+    const service = createServiceWithGateway({ store });
+
+    const failed = await failingService.createTask({
+      id: "task-summary-failed",
+      title: "Summary failed task",
+      prompt: "Create a failed task",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+    const awaitingApproval = await service.createTask({
+      id: "task-summary-awaiting-approval",
+      title: "Summary approval task",
+      prompt: "Create an approval task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    expect(failed.status).toBe("failed");
+    expect(awaitingApproval.status).toBe("awaiting_approval");
+
+    const summary = await service.getOperatorActionSummary();
+
+    expect(summary.tasksNeedingOperatorAttention).toBe(1);
+    expect(summary.tasks.map((task) => task.id)).toEqual([failed.id]);
   });
 });

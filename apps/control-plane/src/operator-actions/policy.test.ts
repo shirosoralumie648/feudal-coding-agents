@@ -1,69 +1,68 @@
 import { describe, expect, it } from "vitest";
-import { TaskRecordSchema } from "@feudal/contracts";
-import {
-  operatorAllowedActionsForTask,
-  syncOperatorActions
-} from "./policy";
+import type { TaskRecord } from "@feudal/contracts";
+import { allowedOperatorActionsForTask, syncOperatorActions } from "./policy";
 
-const baseTask = TaskRecordSchema.parse({
-  id: "task-operator-policy",
-  title: "Recover executor",
-  prompt: "Retry the deployment",
-  status: "planning",
-  artifacts: [],
-  history: [],
-  runIds: [],
-  runs: [],
-  operatorAllowedActions: [],
-  governance: {
-    requestedRequiresApproval: true,
-    effectiveRequiresApproval: true,
-    allowMock: false,
-    sensitivity: "medium",
-    executionMode: "real",
-    policyReasons: [],
-    reviewVerdict: "pending",
-    allowedActions: [],
-    revisionCount: 0
-  },
-  createdAt: "2026-04-06T00:00:00.000Z",
-  updatedAt: "2026-04-06T00:05:00.000Z"
-});
-
-describe("operator action policy", () => {
-  it("separates operator actions from governance states", () => {
+describe("allowedOperatorActionsForTask", () => {
+  it("allows recover, takeover, and abandon for recovery-required tasks", () => {
     expect(
-      operatorAllowedActionsForTask({
-        status: "failed",
-        recoveryState: "healthy"
+      allowedOperatorActionsForTask({
+        status: "executing",
+        recoveryState: "recovery_required"
       })
     ).toEqual(["recover", "takeover", "abandon"]);
+  });
 
+  it("keeps awaiting approval separate from the governance inbox", () => {
     expect(
-      operatorAllowedActionsForTask({
+      allowedOperatorActionsForTask({
         status: "awaiting_approval",
         recoveryState: "healthy"
       })
     ).toEqual(["takeover", "abandon"]);
+  });
 
+  it("does not expose recover for recovery-required tasks outside execution flow", () => {
     expect(
-      operatorAllowedActionsForTask({
+      allowedOperatorActionsForTask({
+        status: "planning",
+        recoveryState: "recovery_required"
+      })
+    ).toEqual(["takeover", "abandon"]);
+  });
+
+  it("returns no operator actions for completed work", () => {
+    expect(
+      allowedOperatorActionsForTask({
         status: "completed",
         recoveryState: "healthy"
       })
     ).toEqual([]);
   });
+});
 
-  it("treats interrupted in-flight work as recoverable", () => {
-    expect(
-      syncOperatorActions(baseTask, "recovery_required").operatorAllowedActions
-    ).toEqual(["recover", "takeover", "abandon"]);
+describe("syncOperatorActions", () => {
+  it("writes operatorAllowedActions onto the task snapshot", () => {
+    const task = syncOperatorActions(
+      {
+        id: "task-operator",
+        title: "Recover executor",
+        prompt: "Retry the deployment",
+        status: "failed",
+        artifacts: [],
+        history: [],
+        runIds: [],
+        runs: [],
+        operatorAllowedActions: [],
+        createdAt: "2026-04-05T00:00:00.000Z",
+        updatedAt: "2026-04-05T00:05:00.000Z"
+      } satisfies TaskRecord,
+      "healthy"
+    );
 
-    expect(
-      operatorAllowedActionsForTask({
-        status: "needs_revision",
-        recoveryState: "healthy"
-      })
-    ).toEqual(["abandon"]);
+    expect(task.operatorAllowedActions).toEqual([
+      "recover",
+      "takeover",
+      "abandon"
+    ]);
   });
 });

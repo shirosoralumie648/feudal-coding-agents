@@ -190,22 +190,19 @@ describe("task event codec", () => {
     });
   });
 
-  it("tracks operator action availability alongside task status diffs", () => {
-    const task = buildTaskRecord({
-      status: "failed",
-      operatorAllowedActions: ["recover", "takeover", "abandon"]
-    });
-
+  it("tracks operatorAllowedActions in task diffs", () => {
     const [, diffEvent] = buildTaskEventInputs(
-      task,
-      "task.execution_failed"
+      buildTaskRecord({
+        operatorAllowedActions: ["takeover", "abandon"]
+      }),
+      "task.operator_takeover_submitted",
+      buildTaskRecord({
+        operatorAllowedActions: []
+      })
     );
 
     expect(diffEvent.payloadJson).toMatchObject({
-      changedPaths: expect.arrayContaining([
-        "/status",
-        "/operatorAllowedActions"
-      ])
+      changedPaths: expect.arrayContaining(["/operatorAllowedActions"])
     });
   });
 });

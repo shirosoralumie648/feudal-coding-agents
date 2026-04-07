@@ -1,23 +1,35 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { defaultOrchestratorService } from "../config";
-import {
-  ActionNotAllowedError,
-  type OrchestratorService
-} from "../services/orchestrator-service";
+import { OperatorActionNotAllowedError } from "../operator-actions/policy";
+import type { OrchestratorService } from "../services/orchestrator-service";
 
 const TaskParamsSchema = z.object({
   taskId: z.string()
 });
 
-const OperatorNoteSchema = z.object({
+const NoteBodySchema = z.object({
   note: z.string().trim().min(1)
 });
 
-const AbandonInputSchema = z.object({
-  note: z.string().trim().min(1),
+const AbandonBodySchema = NoteBodySchema.extend({
   confirm: z.literal(true)
 });
+
+function parseOrReply<T>(
+  schema: z.ZodType<T>,
+  input: unknown,
+  reply: FastifyReply
+) {
+  const parsed = schema.safeParse(input);
+
+  if (!parsed.success) {
+    reply.code(400).send({ message: parsed.error.issues[0]?.message ?? "Invalid request" });
+    return undefined;
+  }
+
+  return parsed.data;
+}
 
 async function ensureTaskExists(
   service: OrchestratorService,
@@ -34,14 +46,14 @@ async function ensureTaskExists(
   return task;
 }
 
-async function sendActionResult(
+async function sendOperatorResult(
   reply: FastifyReply,
   work: () => Promise<unknown>
 ) {
   try {
     return await work();
   } catch (error) {
-    if (error instanceof ActionNotAllowedError) {
+    if (error instanceof OperatorActionNotAllowedError) {
       return reply.code(409).send({ message: error.message });
     }
 
@@ -49,94 +61,99 @@ async function sendActionResult(
   }
 }
 
-function parseBody<T>(
-  schema: z.ZodType<T>,
-  body: unknown,
-  reply: FastifyReply
-) {
-  const result = schema.safeParse(body);
-
-  if (!result.success) {
-    reply.code(400).send({ message: "Invalid request body" });
-    return undefined;
-  }
-
-  return result.data;
-}
-
 export function registerOperatorActionRoutes(
   app: FastifyInstance,
   service: OrchestratorService = defaultOrchestratorService
 ) {
-  app.post("/api/tasks/:taskId/operator-actions/recover", async (request, reply) => {
-    const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
-
-    if (!task) {
-      return reply;
-    }
-
-    const payload = parseBody(OperatorNoteSchema, request.body, reply);
-
-    if (!payload) {
-      return reply;
-    }
-
-    return sendActionResult(reply, () =>
-      service.recoverTask(params.taskId, payload.note)
-    );
-  });
-
-  app.post("/api/tasks/:taskId/operator-actions/takeover", async (request, reply) => {
-    const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
-
-    if (!task) {
-      return reply;
-    }
-
-    const payload = parseBody(OperatorNoteSchema, request.body, reply);
-
-    if (!payload) {
-      return reply;
-    }
-
-    return sendActionResult(reply, () =>
-      service.takeoverTask(params.taskId, payload.note)
-    );
-  });
-
-  app.post("/api/tasks/:taskId/operator-actions/abandon", async (request, reply) => {
-    const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
-
-    if (!task) {
-      return reply;
-    }
-
-    const payload = parseBody(AbandonInputSchema, request.body, reply);
-
-    if (!payload) {
-      return reply;
-    }
-
-    return sendActionResult(reply, () =>
-      service.abandonTask(params.taskId, payload.note, payload.confirm)
-    );
-  });
-
   app.get("/api/tasks/:taskId/operator-actions", async (request, reply) => {
-    const params = TaskParamsSchema.parse(request.params);
-    const task = await ensureTaskExists(service, params.taskId, reply);
+    const params = parseOrReply(TaskParamsSchema, request.params, reply);
 
-    if (!task) {
+    if (!params) {
       return reply;
     }
 
-    return service.listOperatorActions(params.taskId);
+    const actions = await service.listOperatorActions(params.taskId);
+
+    if (!actions) {
+      return reply.code(404).send({ message: "Task not found" });
+    }
+
+    return actions;
   });
 
   app.get("/api/operator-actions/summary", async () =>
     service.getOperatorActionSummary()
   );
+
+  app.post("/api/tasks/:taskId/operator-actions/recover", async (request, reply) => {
+    const params = parseOrReply(TaskParamsSchema, request.params, reply);
+
+    if (!params) {
+      return reply;
+    }
+
+    const task = await ensureTaskExists(service, params.taskId, reply);
+
+    if (!task) {
+      return reply;
+    }
+
+    const payload = parseOrReply(NoteBodySchema, request.body, reply);
+
+    if (!payload) {
+      return reply;
+    }
+
+    return sendOperatorResult(reply, () =>
+      service.recoverTask(params.taskId, payload.note)
+    );
+  });
+
+  app.post("/api/tasks/:taskId/operator-actions/takeover", async (request, reply) => {
+    const params = parseOrReply(TaskParamsSchema, request.params, reply);
+
+    if (!params) {
+      return reply;
+    }
+
+    const task = await ensureTaskExists(service, params.taskId, reply);
+
+    if (!task) {
+      return reply;
+    }
+
+    const payload = parseOrReply(NoteBodySchema, request.body, reply);
+
+    if (!payload) {
+      return reply;
+    }
+
+    return sendOperatorResult(reply, () =>
+      service.takeoverTask(params.taskId, payload.note)
+    );
+  });
+
+  app.post("/api/tasks/:taskId/operator-actions/abandon", async (request, reply) => {
+    const params = parseOrReply(TaskParamsSchema, request.params, reply);
+
+    if (!params) {
+      return reply;
+    }
+
+    const task = await ensureTaskExists(service, params.taskId, reply);
+
+    if (!task) {
+      return reply;
+    }
+
+    const payload = parseOrReply(AbandonBodySchema, request.body, reply);
+
+    if (!payload) {
+      return reply;
+    }
+
+    return sendOperatorResult(reply, () =>
+      service.abandonTask(params.taskId, payload.note)
+    );
+  });
 }
