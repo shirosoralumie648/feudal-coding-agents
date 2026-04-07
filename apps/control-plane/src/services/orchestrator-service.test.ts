@@ -120,6 +120,63 @@ class MismatchedApprovalTaskStore extends MemoryTaskStore {
   }
 }
 
+class GovernanceDisallowApprovalTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-governance-disallow") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Governance disallow task",
+      prompt: "Approve despite governance drift",
+      status: "awaiting_approval",
+      artifacts: [],
+      history: [
+        {
+          status: "awaiting_approval",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "review.approved"
+        }
+      ],
+      runIds: ["run-approval"],
+      approvalRunId: "run-approval",
+      runs: [
+        {
+          id: "run-approval",
+          agent: "approval-gate",
+          status: "awaiting",
+          phase: "approval",
+          awaitPrompt: "Approve the decision brief?",
+          allowedActions: ["approve", "reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      },
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["reject"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: ["abandon"],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
 function createRecordingACPClient(events: string[]): ACPClient {
   const base = createMockACPClient();
 
@@ -277,6 +334,16 @@ describe("orchestrator service durability", () => {
     await expect(
       service.submitGovernanceAction("task-mismatch", "approve")
     ).rejects.toThrow("Task task-mismatch does not allow approve");
+  });
+
+  it("rejects approval actions when stored governance.allowedActions disallows approve", async () => {
+    const service = createServiceWithGateway({
+      store: new GovernanceDisallowApprovalTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-governance-disallow", "approve")
+    ).rejects.toThrow("Task task-governance-disallow does not allow approve");
   });
 
   it("uses createTaskRunGatewayFromEnv to run allowMock=false tasks in mock mode", async () => {

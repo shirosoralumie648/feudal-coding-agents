@@ -189,9 +189,10 @@ function allowedActions(task: TaskRecord): TaskAction[] {
 }
 
 function assertActionAllowed(task: TaskRecord, action: TaskAction) {
-  const taskWithGovernance = syncGovernance(task);
+  const governanceActions = task.governance?.allowedActions;
+  const actionSet = governanceActions ?? allowedActionsForStatus(task.status);
 
-  if (!allowedActions(taskWithGovernance).includes(action)) {
+  if (!actionSet.includes(action)) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
