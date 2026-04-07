@@ -177,6 +177,98 @@ class GovernanceDisallowApprovalTaskStore extends MemoryTaskStore {
   }
 }
 
+class EmptyGovernanceActionsCompatStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    const task = await super.getTask(taskId);
+
+    if (!task || taskId !== "task-legacy-empty-governance") {
+      return task;
+    }
+
+    return {
+      ...task,
+      governance: task.governance
+        ? {
+            ...task.governance,
+            allowedActions: []
+          }
+        : task.governance
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class MissingApprovalRequestCompatStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    const task = await super.getTask(taskId);
+
+    if (!task || taskId !== "task-legacy-missing-approval-request") {
+      return task;
+    }
+
+    return {
+      ...task,
+      approvalRequest: undefined
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class StaleApprovalStateTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-stale-approval-state") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Stale approval state task",
+      prompt: "Reject stale approval state",
+      status: "executing",
+      artifacts: [],
+      history: [
+        {
+          status: "executing",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "task.execution_started"
+        }
+      ],
+      runIds: ["run-stale-approval"],
+      approvalRunId: "run-stale-approval",
+      runs: [
+        {
+          id: "run-stale-approval",
+          agent: "approval-gate",
+          status: "awaiting",
+          phase: "approval",
+          awaitPrompt: "Approve the decision brief?",
+          allowedActions: ["approve", "reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-stale-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"]
+      },
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["approve", "reject"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: ["abandon"],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
 function createRecordingACPClient(events: string[]): ACPClient {
   const base = createMockACPClient();
 
@@ -344,6 +436,58 @@ describe("orchestrator service durability", () => {
     await expect(
       service.submitGovernanceAction("task-governance-disallow", "approve")
     ).rejects.toThrow("Task task-governance-disallow does not allow approve");
+  });
+
+  it("allows approval compatibility path when governance.allowedActions is the legacy empty default", async () => {
+    const service = createServiceWithGateway({
+      store: new EmptyGovernanceActionsCompatStore()
+    });
+    const created = await service.createTask({
+      id: "task-legacy-empty-governance",
+      title: "Legacy empty governance action task",
+      prompt: "Approve despite empty governance actions",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const approved = await service.submitGovernanceAction(created.id, "approve");
+
+    expect(approved.status).toBe("completed");
+  });
+
+  it("allows approval compatibility path when approvalRequest metadata is missing", async () => {
+    const service = createServiceWithGateway({
+      store: new MissingApprovalRequestCompatStore()
+    });
+    const created = await service.createTask({
+      id: "task-legacy-missing-approval-request",
+      title: "Legacy missing approval request task",
+      prompt: "Approve despite missing approval request",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const approved = await service.submitGovernanceAction(created.id, "approve");
+
+    expect(approved.status).toBe("completed");
+  });
+
+  it("rejects stale non-awaiting approval tasks before attempting respondToAwait", async () => {
+    const events: string[] = [];
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: createRecordingACPClient(events),
+        mockClient: createMockACPClient()
+      }),
+      store: new StaleApprovalStateTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-stale-approval-state", "approve")
+    ).rejects.toThrow("Task task-stale-approval-state is not awaiting approval");
+    expect(events.some((event) => event.startsWith("respond:"))).toBe(false);
   });
 
   it("uses createTaskRunGatewayFromEnv to run allowMock=false tasks in mock mode", async () => {

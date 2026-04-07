@@ -190,7 +190,10 @@ function allowedActions(task: TaskRecord): TaskAction[] {
 
 function assertActionAllowed(task: TaskRecord, action: TaskAction) {
   const governanceActions = task.governance?.allowedActions;
-  const actionSet = governanceActions ?? allowedActionsForStatus(task.status);
+  const actionSet =
+    governanceActions && governanceActions.length > 0
+      ? governanceActions
+      : allowedActionsForStatus(task.status);
 
   if (!actionSet.includes(action)) {
     throw new ActionNotAllowedError(task.id, action);
@@ -202,9 +205,9 @@ function assertApprovalActionAllowed(task: TaskRecord, action: TaskAction) {
     return;
   }
 
-  const approvalActions = task.approvalRequest?.actions ?? [];
+  const approvalActions = task.approvalRequest?.actions;
 
-  if (!approvalActions.includes(action)) {
+  if (approvalActions && approvalActions.length > 0 && !approvalActions.includes(action)) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
@@ -657,6 +660,13 @@ export function createOrchestratorService(options: {
       }
 
       throw new Error(`Task ${taskId} not found`);
+    }
+
+    if (
+      (action === "approve" || action === "reject") &&
+      current.status !== "awaiting_approval"
+    ) {
+      throw new Error(`Task ${taskId} is not awaiting approval`);
     }
 
     assertActionAllowed(current, action);
