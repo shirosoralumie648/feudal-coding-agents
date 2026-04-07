@@ -63,6 +63,63 @@ class FailingRecoverPersistStore extends MemoryTaskStore {
   }
 }
 
+class MismatchedApprovalTaskStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    if (taskId !== "task-mismatch") {
+      return super.getTask(taskId);
+    }
+
+    return {
+      id: taskId,
+      title: "Mismatched approval task",
+      prompt: "Approve the mismatched task",
+      status: "awaiting_approval",
+      artifacts: [],
+      history: [
+        {
+          status: "awaiting_approval",
+          at: "2026-04-07T00:00:00.000Z",
+          note: "review.approved"
+        }
+      ],
+      runIds: ["run-approval"],
+      approvalRunId: "run-approval",
+      runs: [
+        {
+          id: "run-approval",
+          agent: "approval-gate",
+          status: "awaiting",
+          phase: "approval",
+          awaitPrompt: "Approve the decision brief?",
+          allowedActions: ["reject"]
+        }
+      ],
+      approvalRequest: {
+        runId: "run-approval",
+        prompt: "Approve the decision brief?",
+        actions: ["reject"]
+      },
+      governance: {
+        requestedRequiresApproval: true,
+        effectiveRequiresApproval: true,
+        allowMock: false,
+        sensitivity: "medium",
+        executionMode: "real",
+        policyReasons: [],
+        reviewVerdict: "approved",
+        allowedActions: ["approve", "reject"],
+        revisionCount: 0
+      },
+      operatorAllowedActions: ["abandon"],
+      createdAt: "2026-04-07T00:00:00.000Z",
+      updatedAt: "2026-04-07T00:00:00.000Z",
+      recoveryState: "healthy",
+      latestEventId: 1,
+      latestProjectionVersion: 1
+    } satisfies TaskProjectionRecord;
+  }
+}
+
 function createRecordingACPClient(events: string[]): ACPClient {
   const base = createMockACPClient();
 
@@ -173,6 +230,53 @@ describe("orchestrator service durability", () => {
     expect(revised.governance?.reviewVerdict).toBe("approved");
     expect(revised.governance?.allowedActions).toEqual(["approve", "reject"]);
     expect(revised.revisionRequest).toBeUndefined();
+  });
+
+  it("submits approve and revise through the unified governance dispatcher", async () => {
+    const service = createServiceWithGateway();
+    const approvalTask = await service.createTask({
+      id: "task-governance-approve",
+      title: "Approval task",
+      prompt: "Approve this task",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    const approved = await service.submitGovernanceAction(
+      approvalTask.id,
+      "approve"
+    );
+
+    expect(approved.status).toBe("completed");
+
+    const revisionTask = await service.createTask({
+      id: "task-governance-revise",
+      title: "Revision task",
+      prompt: "Exercise governance #mock:needs_revision-once",
+      allowMock: true,
+      requiresApproval: false,
+      sensitivity: "high"
+    });
+
+    const revised = await service.submitGovernanceAction(
+      revisionTask.id,
+      "revise",
+      "Tighten rollback scope and re-run review."
+    );
+
+    expect(revised.status).toBe("awaiting_approval");
+    expect(revised.governance?.revisionCount).toBe(1);
+  });
+
+  it("rejects approval actions when approvalRequest.actions drift from governance.allowedActions", async () => {
+    const service = createServiceWithGateway({
+      store: new MismatchedApprovalTaskStore()
+    });
+
+    await expect(
+      service.submitGovernanceAction("task-mismatch", "approve")
+    ).rejects.toThrow("Task task-mismatch does not allow approve");
   });
 
   it("uses createTaskRunGatewayFromEnv to run allowMock=false tasks in mock mode", async () => {

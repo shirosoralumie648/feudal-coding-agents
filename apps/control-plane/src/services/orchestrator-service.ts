@@ -39,6 +39,11 @@ export class ActionNotAllowedError extends Error {
 
 export interface OrchestratorService {
   createTask(spec: TaskSpec): Promise<TaskProjectionRecord>;
+  submitGovernanceAction(
+    taskId: string,
+    action: TaskAction,
+    note?: string
+  ): Promise<TaskProjectionRecord>;
   approveTask(taskId: string): Promise<TaskProjectionRecord>;
   rejectTask(taskId: string): Promise<TaskProjectionRecord>;
   submitRevision(taskId: string, note: string): Promise<TaskProjectionRecord>;
@@ -187,6 +192,18 @@ function assertActionAllowed(task: TaskRecord, action: TaskAction) {
   const taskWithGovernance = syncGovernance(task);
 
   if (!allowedActions(taskWithGovernance).includes(action)) {
+    throw new ActionNotAllowedError(task.id, action);
+  }
+}
+
+function assertApprovalActionAllowed(task: TaskRecord, action: TaskAction) {
+  if (task.status !== "awaiting_approval" || action === "revise") {
+    return;
+  }
+
+  const approvalActions = task.approvalRequest?.actions ?? [];
+
+  if (!approvalActions.includes(action)) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
@@ -626,6 +643,96 @@ export function createOrchestratorService(options: {
     });
   }
 
+  async function submitGovernanceAction(
+    taskId: string,
+    action: TaskAction,
+    note?: string
+  ): Promise<TaskProjectionRecord> {
+    const current = await store.getTask(taskId);
+
+    if (!current) {
+      if (action === "approve" || action === "reject") {
+        throw new Error(`Task ${taskId} is not awaiting approval`);
+      }
+
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    assertActionAllowed(current, action);
+    assertApprovalActionAllowed(current, action);
+
+    if (action === "approve" || action === "reject") {
+      if (!current.approvalRunId) {
+        throw new Error(`Task ${taskId} is missing approval run state`);
+      }
+
+      const persistTask = createPersistTask({
+        store,
+        initialVersion: current.latestProjectionVersion
+      });
+      const resumedApprovalRun = await runGateway.respondToAwait(
+        { executionMode: currentExecutionMode(current) },
+        current.approvalRunId,
+        {
+          role: "user",
+          content: action
+        }
+      );
+
+      let task = transitionTask(current, {
+        type: action === "approve" ? "approval.granted" : "approval.rejected"
+      });
+      task = updateExistingRunSummary(task, resumedApprovalRun, "approval");
+      task = {
+        ...task,
+        approvalRunId: undefined,
+        approvalRequest: undefined
+      };
+
+      if (action === "approve") {
+        await persistTask(task, "task.approved");
+
+        return runExecutionAndVerification({
+          task,
+          persistTask,
+          runMetadata: { taskId }
+        });
+      }
+
+      return persistTask(task, "task.rejected");
+    }
+
+    const trimmedNote = note?.trim() ?? "";
+
+    if (trimmedNote.length === 0) {
+      throw new Error("Revision note must not be empty");
+    }
+
+    const persistTask = createPersistTask({
+      store,
+      initialVersion: current.latestProjectionVersion
+    });
+    const governance = ensureGovernance(current);
+    let task = transitionTask(current, { type: "revision.submitted" });
+    task = {
+      ...task,
+      governance: {
+        ...governance,
+        reviewVerdict: "pending",
+        revisionCount: governance.revisionCount + 1
+      },
+      revisionRequest: undefined
+    };
+    await persistTask(task, "task.revision_submitted");
+
+    return runPlanningReviewAndBranch({
+      task,
+      persistTask,
+      runMetadata: { taskId },
+      revisionNote: trimmedNote
+    });
+  }
+
   return {
     async createTask(spec: TaskSpec): Promise<TaskProjectionRecord> {
       const runMetadata = { taskId: spec.id };
@@ -656,123 +763,18 @@ export function createOrchestratorService(options: {
       });
     },
 
+    submitGovernanceAction,
+
     async approveTask(taskId: string): Promise<TaskProjectionRecord> {
-      const current = await store.getTask(taskId);
-
-      if (!current) {
-        throw new Error(`Task ${taskId} is not awaiting approval`);
-      }
-
-      assertActionAllowed(current, "approve");
-
-      if (!current.approvalRunId) {
-        throw new Error(`Task ${taskId} is missing approval run state`);
-      }
-
-      const persistTask = createPersistTask({
-        store,
-        initialVersion: current.latestProjectionVersion
-      });
-      const resumedApprovalRun = await runGateway.respondToAwait(
-        { executionMode: currentExecutionMode(current) },
-        current.approvalRunId,
-        {
-          role: "user",
-          content: "approve"
-        }
-      );
-
-      let task = transitionTask(current, { type: "approval.granted" });
-      task = updateExistingRunSummary(task, resumedApprovalRun, "approval");
-      task = {
-        ...task,
-        approvalRunId: undefined,
-        approvalRequest: undefined
-      };
-      await persistTask(task, "task.approved");
-
-      return runExecutionAndVerification({
-        task,
-        persistTask,
-        runMetadata: { taskId }
-      });
+      return submitGovernanceAction(taskId, "approve");
     },
 
     async rejectTask(taskId: string): Promise<TaskProjectionRecord> {
-      const current = await store.getTask(taskId);
-
-      if (!current) {
-        throw new Error(`Task ${taskId} is not awaiting approval`);
-      }
-
-      assertActionAllowed(current, "reject");
-
-      if (!current.approvalRunId) {
-        throw new Error(`Task ${taskId} is missing approval run state`);
-      }
-
-      const persistTask = createPersistTask({
-        store,
-        initialVersion: current.latestProjectionVersion
-      });
-      const resumedApprovalRun = await runGateway.respondToAwait(
-        { executionMode: currentExecutionMode(current) },
-        current.approvalRunId,
-        {
-          role: "user",
-          content: "reject"
-        }
-      );
-
-      let task = transitionTask(current, { type: "approval.rejected" });
-      task = updateExistingRunSummary(task, resumedApprovalRun, "approval");
-      task = {
-        ...task,
-        approvalRunId: undefined,
-        approvalRequest: undefined
-      };
-
-      return persistTask(task, "task.rejected");
+      return submitGovernanceAction(taskId, "reject");
     },
 
     async submitRevision(taskId: string, note: string): Promise<TaskProjectionRecord> {
-      const current = await store.getTask(taskId);
-
-      if (!current) {
-        throw new Error(`Task ${taskId} not found`);
-      }
-
-      const trimmedNote = note.trim();
-
-      if (trimmedNote.length === 0) {
-        throw new Error("Revision note must not be empty");
-      }
-
-      assertActionAllowed(current, "revise");
-
-      const persistTask = createPersistTask({
-        store,
-        initialVersion: current.latestProjectionVersion
-      });
-      const governance = ensureGovernance(current);
-      let task = transitionTask(current, { type: "revision.submitted" });
-      task = {
-        ...task,
-        governance: {
-          ...governance,
-          reviewVerdict: "pending",
-          revisionCount: governance.revisionCount + 1
-        },
-        revisionRequest: undefined
-      };
-      await persistTask(task, "task.revision_submitted");
-
-      return runPlanningReviewAndBranch({
-        task,
-        persistTask,
-        runMetadata: { taskId },
-        revisionNote: trimmedNote
-      });
+      return submitGovernanceAction(taskId, "revise", note);
     },
 
     async recoverTask(taskId: string, noteInput: string): Promise<TaskProjectionRecord> {
