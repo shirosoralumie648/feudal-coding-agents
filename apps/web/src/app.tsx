@@ -300,11 +300,15 @@ export function App() {
   const selectedReplayTask = selectedTask ? taskReplay[selectedTask.id] : undefined;
   const awaitingTasks = tasks.filter((task) => task.status === "awaiting_approval");
   const governanceTasks = tasks.filter((task) => {
+    if (task.status === "awaiting_approval") {
+      return true;
+    }
+
     if (task.governance) {
       return task.governance.allowedActions.length > 0;
     }
 
-    return task.status === "awaiting_approval";
+    return false;
   });
   const recoveryCount =
     recoverySummary.tasksNeedingRecovery + recoverySummary.runsNeedingRecovery;
