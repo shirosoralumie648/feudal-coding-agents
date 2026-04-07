@@ -6,7 +6,10 @@ import type {
 } from "@feudal/acp";
 import { createMockACPClient } from "@feudal/acp/mock-client";
 import { createTaskRunGateway } from "./task-run-gateway";
-import { createOrchestratorService } from "./orchestrator-service";
+import {
+  ActionNotAllowedError,
+  createOrchestratorService
+} from "./orchestrator-service";
 import type { TaskProjectionRecord } from "../persistence/task-read-model";
 import { MemoryTaskStore } from "../store";
 
@@ -208,6 +211,26 @@ class MissingApprovalRequestCompatStore extends MemoryTaskStore {
     return {
       ...task,
       approvalRequest: undefined
+    } satisfies TaskProjectionRecord;
+  }
+}
+
+class EmptyApprovalRequestActionsCompatStore extends MemoryTaskStore {
+  override async getTask(taskId: string) {
+    const task = await super.getTask(taskId);
+
+    if (!task || taskId !== "task-empty-approval-actions") {
+      return task;
+    }
+
+    return {
+      ...task,
+      approvalRequest: task.approvalRequest
+        ? {
+            ...task.approvalRequest,
+            actions: []
+          }
+        : task.approvalRequest
     } satisfies TaskProjectionRecord;
   }
 }
@@ -474,6 +497,24 @@ describe("orchestrator service durability", () => {
     expect(approved.status).toBe("completed");
   });
 
+  it("rejects approval when approvalRequest is present but has empty actions metadata", async () => {
+    const service = createServiceWithGateway({
+      store: new EmptyApprovalRequestActionsCompatStore()
+    });
+    const created = await service.createTask({
+      id: "task-empty-approval-actions",
+      title: "Empty approval actions task",
+      prompt: "Approval request with empty actions should fail closed",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    await expect(
+      service.submitGovernanceAction(created.id, "approve")
+    ).rejects.toThrow("Task task-empty-approval-actions does not allow approve");
+  });
+
   it("rejects stale non-awaiting approval tasks before attempting respondToAwait", async () => {
     const events: string[] = [];
     const service = createOrchestratorService({
@@ -486,7 +527,10 @@ describe("orchestrator service durability", () => {
 
     await expect(
       service.submitGovernanceAction("task-stale-approval-state", "approve")
-    ).rejects.toThrow("Task task-stale-approval-state is not awaiting approval");
+    ).rejects.toBeInstanceOf(ActionNotAllowedError);
+    await expect(
+      service.submitGovernanceAction("task-stale-approval-state", "approve")
+    ).rejects.toThrow("Task task-stale-approval-state does not allow approve");
     expect(events.some((event) => event.startsWith("respond:"))).toBe(false);
   });
 

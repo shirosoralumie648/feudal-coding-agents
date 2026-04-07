@@ -205,9 +205,13 @@ function assertApprovalActionAllowed(task: TaskRecord, action: TaskAction) {
     return;
   }
 
-  const approvalActions = task.approvalRequest?.actions;
+  if (!task.approvalRequest) {
+    return;
+  }
 
-  if (approvalActions && approvalActions.length > 0 && !approvalActions.includes(action)) {
+  const approvalActions = task.approvalRequest.actions;
+
+  if (!approvalActions.includes(action)) {
     throw new ActionNotAllowedError(task.id, action);
   }
 }
@@ -666,7 +670,7 @@ export function createOrchestratorService(options: {
       (action === "approve" || action === "reject") &&
       current.status !== "awaiting_approval"
     ) {
-      throw new Error(`Task ${taskId} is not awaiting approval`);
+      throw new ActionNotAllowedError(taskId, action);
     }
 
     assertActionAllowed(current, action);
