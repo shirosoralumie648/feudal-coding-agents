@@ -24,8 +24,12 @@ function hasGovernanceDrift(
   task: TaskRecord,
   inlineActions: InlineGovernanceAction[]
 ): boolean {
-  if (task.status !== "awaiting_approval" || !task.approvalRequest) {
+  if (task.status !== "awaiting_approval") {
     return false;
+  }
+
+  if (!task.approvalRequest) {
+    return inlineActions.length > 0;
   }
 
   const approvalRequestActions = task.approvalRequest.actions;
