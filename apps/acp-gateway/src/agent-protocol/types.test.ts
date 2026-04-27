@@ -13,7 +13,7 @@ describe("agent-protocol/types", () => {
   describe("AgentMessage", () => {
     it("validates required fields: id, jsonrpc, method, from, to", () => {
       const validMessage: AgentMessage = {
-        id: "msg-001",
+        id: "550e8400-e29b-41d4-a716-446655440001",
         jsonrpc: "2.0",
         method: "ping",
         params: {},
@@ -26,7 +26,7 @@ describe("agent-protocol/types", () => {
 
     it("accepts array of targets for broadcast", () => {
       const message: AgentMessage = {
-        id: "msg-002",
+        id: "550e8400-e29b-41d4-a716-446655440002",
         jsonrpc: "2.0",
         method: "notify",
         params: { update: "status" },
@@ -43,7 +43,7 @@ describe("agent-protocol/types", () => {
 
     it("rejects message with invalid jsonrpc version", () => {
       const badMessage = {
-        id: "msg-003",
+        id: "550e8400-e29b-41d4-a716-446655440003",
         jsonrpc: "1.0",
         method: "ping",
         params: {},
