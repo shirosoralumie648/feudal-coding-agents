@@ -40,14 +40,31 @@ interface InternalAgentRecord extends AgentManifest {
   temporary: boolean;
 }
 
+type ChangeCallback = () => void;
+
 // ── Implementation ──────────────────────────────────────
 
 export class AgentRegistry {
   private readonly agents = new Map<string, InternalAgentRecord>();
   private readonly store: AgentRegistryStore | undefined;
+  private readonly changeCallbacks = new Set<ChangeCallback>();
 
   constructor(options?: { store?: AgentRegistryStore }) {
     this.store = options?.store;
+  }
+
+  /**
+   * Subscribe to registry changes. Returns unsubscribe function.
+   */
+  onChange(callback: ChangeCallback): () => void {
+    this.changeCallbacks.add(callback);
+    return () => this.changeCallbacks.delete(callback);
+  }
+
+  private notifyChange(): void {
+    for (const callback of this.changeCallbacks) {
+      callback();
+    }
   }
 
   async register(manifest: Partial<AgentManifest> & Omit<AgentManifest, "agentId">, options?: RegistrationOptions): Promise<RegisterResult> {
@@ -81,6 +98,8 @@ export class AgentRegistry {
       });
     }
 
+    this.notifyChange();
+
     return { success: true, agentId, version: 1 };
   }
 
@@ -99,6 +118,8 @@ export class AgentRegistry {
         timestamp: new Date().toISOString(),
       });
     }
+
+    this.notifyChange();
   }
 
   async updateHealth(agentId: string, health: AgentHealthStatus): Promise<void> {
@@ -117,6 +138,8 @@ export class AgentRegistry {
         timestamp: new Date().toISOString(),
       });
     }
+
+    this.notifyChange();
   }
 
   getAgent(agentId: string): AgentManifest | undefined {
