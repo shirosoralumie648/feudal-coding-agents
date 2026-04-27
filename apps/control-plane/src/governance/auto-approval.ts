@@ -14,8 +14,10 @@ import type {
   AutoApprovalThreshold,
   ComplexityScoreInput,
   AutoApprovalAuditLog,
-} from "@feudal/contracts/governance";
-import type { EventStore } from "@feudal/persistence";
+} from "@feudal/contracts";
+import { createPostgresEventStore } from "@feudal/persistence";
+
+type EventStore = ReturnType<typeof createPostgresEventStore>;
 
 export interface AutoApprovalEngineOptions {
   config: AutoApprovalConfig;
