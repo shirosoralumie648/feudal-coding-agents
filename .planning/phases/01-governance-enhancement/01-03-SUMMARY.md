@@ -75,6 +75,7 @@ Each task was committed atomically:
 1. **Task 1: Define auto-approval types and schemas** - `d114f16` (feat)
 2. **Task 2: Update governance exports** - included in `9c90004` (feat)
 3. **Task 3: Implement auto-approval engine** - `9c90004` (feat)
+4. **Post-execution fix: Correct import paths** - `0b44307` (fix)
 
 ## Files Created/Modified
 - `packages/contracts/src/governance/auto-approval.ts` - Auto-approval Zod schemas
@@ -89,7 +90,14 @@ Each task was committed atomically:
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 1 - Bug] Fixed incorrect import paths in auto-approval engine**
+- **Found during:** Verification
+- **Issue:** Import `@feudal/contracts/governance` did not match TypeScript path mapping, `@feudal/persistence` lacked type exports
+- **Fix:** Changed import to `@feudal/contracts` and used `ReturnType<typeof createPostgresEventStore>` pattern
+- **Files modified:** apps/control-plane/src/governance/auto-approval.ts
+- **Commit:** 0b44307
 
 ## Issues Encountered
 None
