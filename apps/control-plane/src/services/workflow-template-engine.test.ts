@@ -410,3 +410,83 @@ describe("executeTemplate — condition evaluation with step outputs", () => {
     expect(calls[0][2].agent).toBe("agent-a");
   });
 });
+
+// ---- Task 2: DEFAULT_TEMPLATE structure ----
+
+describe("DEFAULT_TEMPLATE", () => {
+  it("has name 'default', semver version, status 'published', and 6 steps in dependency order", () => {
+    const engine = createWorkflowTemplateEngine();
+    const tmpl = engine.DEFAULT_TEMPLATE!;
+
+    expect(tmpl.name).toBe("default");
+    expect(tmpl.version).toMatch(/^\d+\.\d+\.\d+/); // semver
+    expect(tmpl.status).toBe("published");
+    expect(tmpl.steps).toHaveLength(6);
+
+    const order = engine.resolveExecutionOrder(tmpl.steps);
+    // intake → planning → review → approval → execution → verification
+    const intakeIdx = order.indexOf("intake");
+    const planningIdx = order.indexOf("planning");
+    const reviewIdx = order.indexOf("review");
+    const approvalIdx = order.indexOf("approval");
+    const executionIdx = order.indexOf("execution");
+    const verificationIdx = order.indexOf("verification");
+
+    expect(intakeIdx).toBeLessThan(planningIdx);
+    expect(planningIdx).toBeLessThan(reviewIdx);
+    expect(reviewIdx).toBeLessThan(approvalIdx);
+    expect(approvalIdx).toBeLessThan(executionIdx);
+    expect(executionIdx).toBeLessThan(verificationIdx);
+  });
+
+  it("step 'review' uses agent 'auditor-agent'", () => {
+    const engine = createWorkflowTemplateEngine();
+    const reviewStep = engine.DEFAULT_TEMPLATE!.steps.find((s) => s.id === "review");
+    expect(reviewStep).toBeDefined();
+    expect(reviewStep!.agent).toBe("auditor-agent");
+  });
+
+  it("step 'approval' has type 'approval' (triggers AwaitStep path)", () => {
+    const engine = createWorkflowTemplateEngine();
+    const approvalStep = engine.DEFAULT_TEMPLATE!.steps.find((s) => s.id === "approval");
+    expect(approvalStep).toBeDefined();
+    expect(approvalStep!.type).toBe("approval");
+  });
+
+  it("step 'execution' dependsOn ['approval'] and step 'verification' dependsOn ['execution']", () => {
+    const engine = createWorkflowTemplateEngine();
+    const execStep = engine.DEFAULT_TEMPLATE!.steps.find((s) => s.id === "execution");
+    const verifyStep = engine.DEFAULT_TEMPLATE!.steps.find((s) => s.id === "verification");
+    expect(execStep!.dependsOn).toEqual(["approval"]);
+    expect(verifyStep!.dependsOn).toEqual(["execution"]);
+  });
+});
+
+// ---- Task 2: evaluateCondition edge cases ----
+
+describe("evaluateCondition — edge cases", () => {
+  it("returns false when the source path does not exist in stepOutputs (missing key)", () => {
+    const engine = createWorkflowTemplateEngine();
+    const stepOutputs = { "step-A": { result: { status: "ok" } } };
+
+    const result = engine.evaluateCondition(
+      { sourceStepId: "step-A", path: "output.result", operator: "equals", value: "ok" },
+      stepOutputs
+    );
+
+    // "output.result" does not exist (the key is "result", not "output")
+    expect(result).toBe(false);
+  });
+
+  it("returns true when operator 'contains' matches a substring", () => {
+    const engine = createWorkflowTemplateEngine();
+    const stepOutputs = { "step-A": { verdict: "approved_partial" } };
+
+    const result = engine.evaluateCondition(
+      { sourceStepId: "step-A", path: "verdict", operator: "contains", value: "approved" },
+      stepOutputs
+    );
+
+    expect(result).toBe(true);
+  });
+});

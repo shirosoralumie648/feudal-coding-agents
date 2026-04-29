@@ -26,6 +26,9 @@ export interface WorkflowTemplateEngine {
     condition: TemplateCondition,
     stepOutputs: Record<string, unknown>
   ): boolean;
+
+  /** The built-in "default" template (D-11) — mirrors orchestrator-flows.ts */
+  readonly DEFAULT_TEMPLATE: WorkflowTemplate;
 }
 
 // ---- Pure domain functions ----
@@ -253,6 +256,92 @@ async function executeTemplate(options: {
   await persistTask(currentTask, "task.template_completed");
 }
 
+// ---- Built-in default template (D-11) ----
+// Mirrors the hardcoded flow in orchestrator-flows.ts:
+// intake → planning → review → approval → execution → verification
+
+export const DEFAULT_TEMPLATE: WorkflowTemplate = {
+  name: "default",
+  version: "1.0.0",
+  parameters: [],
+  steps: [
+    {
+      id: "intake",
+      type: "intake",
+      agent: "intake-agent",
+      dependsOn: [],
+      config: { prompt: "${params.prompt}" },
+    },
+    {
+      id: "planning",
+      type: "planning",
+      agent: "analyst-agent",
+      dependsOn: ["intake"],
+      config: {
+        messages: [
+          { role: "agent/intake-agent", content: "${params.taskspec}" },
+        ],
+      },
+    },
+    {
+      id: "review",
+      type: "review",
+      agent: "auditor-agent",
+      dependsOn: ["planning"],
+      config: {
+        messages: [
+          {
+            role: "agent/analyst-agent",
+            content: "${params.decisionBrief}",
+          },
+          { role: "user", content: "${params.prompt}" },
+        ],
+      },
+    },
+    {
+      id: "approval",
+      type: "approval",
+      agent: "human-operator",
+      dependsOn: ["review"],
+      config: {
+        prompt: "Approve the decision brief?",
+        actions: ["approve", "reject"],
+      },
+    },
+    {
+      id: "execution",
+      type: "execution",
+      agent: "gongbu-executor",
+      dependsOn: ["approval"],
+      config: {
+        artifactType: "assignment",
+        taskId: "${params.taskId}",
+        prompt: "${params.prompt}",
+        decisionBrief: "${params.decisionBrief}",
+      },
+    },
+    {
+      id: "verification",
+      type: "verification",
+      agent: "xingbu-verifier",
+      dependsOn: ["execution"],
+      config: {
+        messages: [
+          {
+            role: "agent/gongbu-executor",
+            content: "${params.executionOutput}",
+          },
+        ],
+      },
+    },
+  ],
+  status: "published",
+  createdAt: "2026-04-29T00:00:00.000Z",
+  updatedAt: "2026-04-29T00:00:00.000Z",
+  lastPublishedVersion: 1,
+  eventVersion: 1,
+};
+
 // ---- Factory ----
 
 export function createWorkflowTemplateEngine(): WorkflowTemplateEngine {
@@ -260,5 +349,6 @@ export function createWorkflowTemplateEngine(): WorkflowTemplateEngine {
     executeTemplate,
     resolveExecutionOrder,
     evaluateCondition,
+    DEFAULT_TEMPLATE,
   };
 }
