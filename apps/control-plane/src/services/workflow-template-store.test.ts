@@ -170,4 +170,158 @@ describe("MemoryTemplateStore", () => {
     expect(history[2].eventVersion).toBe(3);
     expect(history[3].eventVersion).toBe(4);
   });
+
+  // ---- Export/Import (Task 2) ----
+
+  // Test 11: exportTemplate returns a TemplateExportPackage
+  it("exports a published template as a TemplateExportPackage", async () => {
+    const store = new MemoryTemplateStore();
+    await store.createTemplate(makeDraftInput({ name: "export-me", version: "1.2.3" }));
+    await store.publishTemplate("export-me", 1);
+
+    const pkg = await store.exportTemplate("export-me");
+
+    expect(pkg.format).toBe("feudal-template/v1");
+    expect(pkg.template.name).toBe("export-me");
+    expect(pkg.template.version).toBe("1.2.3");
+    expect(pkg.template.parameters).toHaveLength(1);
+    expect(pkg.template.steps).toHaveLength(1);
+    expect(pkg.exportedAt).toBeTruthy();
+    // Internal fields must be stripped
+    expect((pkg.template as { status?: unknown }).status).toBeUndefined();
+    expect((pkg.template as { eventVersion?: unknown }).eventVersion).toBeUndefined();
+    expect((pkg.template as { lastPublishedVersion?: unknown }).lastPublishedVersion).toBeUndefined();
+  });
+
+  // Test 12: exportTemplate throws when template doesn't exist
+  it("rejects export when the template does not exist", async () => {
+    const store = new MemoryTemplateStore();
+
+    await expect(
+      store.exportTemplate("nonexistent")
+    ).rejects.toThrow(/not found/);
+  });
+
+  // Test 13: exportTemplate throws when template is draft
+  it("rejects export of a draft template", async () => {
+    const store = new MemoryTemplateStore();
+    await store.createTemplate(makeDraftInput({ name: "draft-export" }));
+
+    await expect(
+      store.exportTemplate("draft-export")
+    ).rejects.toThrow(/Cannot export draft/);
+  });
+
+  // Test 14: importTemplate creates a new template from a package
+  it("imports a TemplateExportPackage creating a draft template", async () => {
+    const store = new MemoryTemplateStore();
+
+    const pkg = {
+      format: "feudal-template/v1" as const,
+      template: {
+        name: "imported-flow",
+        version: "2.0.0",
+        parameters: [
+          { name: "param1", type: "string" as const, required: true, description: "desc" }
+        ],
+        steps: [
+          { id: "s1", type: "intake" as const, agent: "ag1", dependsOn: [] }
+        ],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      },
+      exportedAt: "2026-04-29T00:00:00.000Z"
+    };
+
+    const imported = await store.importTemplate(pkg);
+
+    expect(imported.name).toBe("imported-flow");
+    expect(imported.version).toBe("2.0.0");
+    expect(imported.status).toBe("draft");
+    expect(imported.eventVersion).toBe(1);
+    expect(imported.parameters).toHaveLength(1);
+    expect(imported.steps).toHaveLength(1);
+    // Timestamps should be reset to now
+    expect(imported.createdAt).toBeTruthy();
+    expect(imported.updatedAt).toBeTruthy();
+  });
+
+  // Test 15: importTemplate rejects when name already exists
+  it("rejects import when a template with the same name already exists", async () => {
+    const store = new MemoryTemplateStore();
+    await store.createTemplate(makeDraftInput({ name: "collision" }));
+
+    const pkg = {
+      format: "feudal-template/v1" as const,
+      template: {
+        name: "collision",
+        version: "1.0.0",
+        parameters: [],
+        steps: [{ id: "s1", type: "intake" as const, agent: "ag1", dependsOn: [] }],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      },
+      exportedAt: "2026-04-29T00:00:00.000Z"
+    };
+
+    await expect(
+      store.importTemplate(pkg)
+    ).rejects.toThrow(/already exists/);
+  });
+
+  // Test 16: importTemplate rejects invalid format
+  it("rejects import when format is not feudal-template/v1", async () => {
+    const store = new MemoryTemplateStore();
+
+    const pkg = {
+      format: "other-format/v2" as string,
+      template: {
+        name: "bad-format",
+        version: "1.0.0",
+        parameters: [],
+        steps: [],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      },
+      exportedAt: "2026-04-29T00:00:00.000Z"
+    };
+
+    await expect(
+      store.importTemplate(pkg as Parameters<typeof store.importTemplate>[0])
+    ).rejects.toThrow(/Unsupported template format/);
+  });
+
+  // Test 17: Round-trip export->import preserves name, version, parameters, steps
+  it("preserves template data through export->import round-trip", async () => {
+    const storeA = new MemoryTemplateStore();
+    const complexTemplate = makeDraftInput({
+      name: "round-trip-flow",
+      version: "3.1.0",
+      parameters: [
+        { name: "codebase", type: "string" as const, required: true, description: "Code path" },
+        { name: "maxIssues", type: "number" as const, required: false, description: "Max issues", default: 10 }
+      ],
+      steps: [
+        { id: "intake", type: "intake" as const, agent: "intake-agent", dependsOn: [] },
+        { id: "review", type: "review" as const, agent: "auditor", dependsOn: ["intake"] }
+      ]
+    });
+
+    await storeA.createTemplate(complexTemplate);
+    await storeA.publishTemplate("round-trip-flow", 1);
+
+    const pkg = await storeA.exportTemplate("round-trip-flow");
+
+    // Import into a clean store
+    const storeB = new MemoryTemplateStore();
+    const imported = await storeB.importTemplate(pkg);
+
+    expect(imported.name).toBe(complexTemplate.name);
+    expect(imported.version).toBe(complexTemplate.version);
+    expect(imported.parameters).toHaveLength(complexTemplate.parameters.length);
+    expect(imported.parameters[0].name).toBe(complexTemplate.parameters[0].name);
+    expect(imported.steps).toHaveLength(complexTemplate.steps.length);
+    expect(imported.steps[1].dependsOn).toEqual(["intake"]);
+    expect(imported.status).toBe("draft");
+  });
 });
