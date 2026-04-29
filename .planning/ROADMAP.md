@@ -116,6 +116,15 @@ Plans:
 
 **Dependencies:** None
 
+**Plans:** 5 plans
+
+Plans:
+- [ ] 04-01-PLAN.md -- Analytics contract types (Zod schemas, MetricEventEmitter/MetricListener interfaces)
+- [ ] 04-02-PLAN.md -- AnalyticsService pull-mode engine and /analytics/* API routes (snapshot, SSE, audit trail)
+- [ ] 04-03-PLAN.md -- AlertService with JSON rules, suppression, in-app + webhook notifications
+- [ ] 04-04-PLAN.md -- AnalyticsDashboard frontend with recharts (metric cards, line/bar/pie charts, SSE hook)
+- [ ] 04-05-PLAN.md -- AuditTrailViewer (timeline/table, filters, search) + AlertPanel + app.tsx integration
+
 ---
 
 ### Phase 5: Plugin Architecture
