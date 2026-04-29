@@ -26,43 +26,209 @@ export interface TemplateStore {
 }
 
 export class MemoryTemplateStore implements TemplateStore {
-  async createTemplate(): Promise<WorkflowTemplate> {
-    throw new Error("Not implemented");
+  private readonly templates = new Map<string, WorkflowTemplate>();
+  private readonly versionHistory = new Map<string, TemplateVersionEvent[]>();
+  private readonly publishedCache = new Map<string, WorkflowTemplate>();
+  private lastTimestamp = new Date(0);
+
+  private now(): string {
+    const current = new Date();
+    if (current <= this.lastTimestamp) {
+      return new Date(this.lastTimestamp.getTime() + 1).toISOString();
+    }
+    this.lastTimestamp = current;
+    return current.toISOString();
   }
 
-  async getTemplate(): Promise<WorkflowTemplate | undefined> {
-    throw new Error("Not implemented");
+  private recordEvent(
+    eventType: TemplateVersionEvent["eventType"],
+    eventVersion: number,
+    templateName: string,
+    status: TemplateStatus | null
+  ): void {
+    const event: TemplateVersionEvent = {
+      eventType,
+      eventVersion,
+      occurredAt: this.now(),
+      templateName,
+      status
+    };
+    const existing = this.versionHistory.get(templateName) ?? [];
+    this.versionHistory.set(templateName, [...existing, event]);
   }
 
-  async updateTemplate(): Promise<WorkflowTemplate> {
-    throw new Error("Not implemented");
+  private validateTemplateExists(
+    existing: WorkflowTemplate | undefined,
+    name: string
+  ): WorkflowTemplate {
+    if (!existing) {
+      throw new Error(`Template "${name}" not found`);
+    }
+    return existing;
   }
 
-  async publishTemplate(): Promise<WorkflowTemplate> {
-    throw new Error("Not implemented");
+  private checkVersion(
+    existing: WorkflowTemplate,
+    expectedVersion: number,
+    name: string
+  ): void {
+    if (existing.eventVersion !== expectedVersion) {
+      throw new Error(
+        `Version mismatch for template "${name}": expected v${expectedVersion}, current v${existing.eventVersion}`
+      );
+    }
   }
 
-  async unpublishTemplate(): Promise<WorkflowTemplate> {
-    throw new Error("Not implemented");
+  async createTemplate(
+    input: Omit<WorkflowTemplate, "status" | "eventVersion" | "createdAt" | "updatedAt">
+  ): Promise<WorkflowTemplate> {
+    if (this.templates.has(input.name)) {
+      throw new Error(`Template "${input.name}" already exists`);
+    }
+
+    const now = this.now();
+    const template: WorkflowTemplate = {
+      ...input,
+      status: "draft",
+      eventVersion: 1,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.templates.set(input.name, template);
+    this.recordEvent("template.created", 1, input.name, "draft");
+
+    return template;
   }
 
-  async deleteTemplate(): Promise<void> {
-    throw new Error("Not implemented");
+  async getTemplate(name: string): Promise<WorkflowTemplate | undefined> {
+    return this.templates.get(name);
   }
 
-  async listTemplates(): Promise<WorkflowTemplate[]> {
-    throw new Error("Not implemented");
+  async updateTemplate(
+    name: string,
+    updates: Partial<Omit<WorkflowTemplate, "name" | "createdAt" | "eventVersion">>,
+    expectedVersion: number
+  ): Promise<WorkflowTemplate> {
+    const existing = this.validateTemplateExists(this.templates.get(name), name);
+    this.checkVersion(existing, expectedVersion, name);
+
+    const newVersion = existing.eventVersion + 1;
+    const updated: WorkflowTemplate = {
+      name: existing.name,
+      version: updates.version ?? existing.version,
+      parameters: updates.parameters ?? existing.parameters,
+      steps: updates.steps ?? existing.steps,
+      status: updates.status ?? existing.status,
+      createdAt: existing.createdAt,
+      updatedAt: this.now(),
+      lastPublishedVersion: updates.lastPublishedVersion ?? existing.lastPublishedVersion,
+      eventVersion: newVersion
+    };
+
+    this.templates.set(name, updated);
+
+    if (updated.status === "published") {
+      this.publishedCache.set(name, updated);
+    }
+
+    this.recordEvent("template.updated", newVersion, name, updated.status);
+
+    return updated;
   }
 
-  async getTemplateVersionHistory(): Promise<TemplateVersionEvent[]> {
-    throw new Error("Not implemented");
+  async publishTemplate(
+    name: string,
+    expectedVersion: number
+  ): Promise<WorkflowTemplate> {
+    const existing = this.validateTemplateExists(this.templates.get(name), name);
+    this.checkVersion(existing, expectedVersion, name);
+
+    if (existing.status === "published") {
+      throw new Error(`Template "${name}" is already published`);
+    }
+
+    const newVersion = existing.eventVersion + 1;
+    const published: WorkflowTemplate = {
+      ...existing,
+      status: "published",
+      lastPublishedVersion: newVersion,
+      updatedAt: this.now(),
+      eventVersion: newVersion
+    };
+
+    this.templates.set(name, published);
+    this.publishedCache.set(name, published);
+    this.recordEvent("template.published", newVersion, name, "published");
+
+    return published;
   }
+
+  async unpublishTemplate(
+    name: string,
+    expectedVersion: number
+  ): Promise<WorkflowTemplate> {
+    const existing = this.validateTemplateExists(this.templates.get(name), name);
+    this.checkVersion(existing, expectedVersion, name);
+
+    if (existing.status !== "published") {
+      throw new Error(`Template "${name}" is not published`);
+    }
+
+    const newVersion = existing.eventVersion + 1;
+    const unpublished: WorkflowTemplate = {
+      ...existing,
+      status: "draft",
+      updatedAt: this.now(),
+      eventVersion: newVersion
+    };
+
+    this.templates.set(name, unpublished);
+    this.publishedCache.delete(name);
+    this.recordEvent("template.unpublished", newVersion, name, "draft");
+
+    return unpublished;
+  }
+
+  async deleteTemplate(
+    name: string,
+    expectedVersion: number
+  ): Promise<void> {
+    const existing = this.validateTemplateExists(this.templates.get(name), name);
+    this.checkVersion(existing, expectedVersion, name);
+
+    if (existing.status === "published") {
+      throw new Error(
+        `Cannot delete published template "${name}". Unpublish it first.`
+      );
+    }
+
+    this.templates.delete(name);
+    this.publishedCache.delete(name);
+    this.recordEvent("template.deleted", existing.eventVersion + 1, name, null);
+  }
+
+  async listTemplates(filter?: ListTemplatesFilter): Promise<WorkflowTemplate[]> {
+    const all = [...this.templates.values()];
+
+    if (!filter?.status) {
+      return all;
+    }
+
+    return all.filter((t) => t.status === filter.status);
+  }
+
+  async getTemplateVersionHistory(name: string): Promise<TemplateVersionEvent[]> {
+    return this.versionHistory.get(name) ?? [];
+  }
+
+  // ---- export/import stubs (implemented in Task 2) ----
 
   async exportTemplate(): Promise<TemplateExportPackage> {
     throw new Error("Not implemented");
   }
 
-  async importTemplate(): Promise<WorkflowTemplate> {
+  async importTemplate(): Promise<TemplateExportPackage> {
     throw new Error("Not implemented");
   }
 }
