@@ -222,13 +222,53 @@ export class MemoryTemplateStore implements TemplateStore {
     return this.versionHistory.get(name) ?? [];
   }
 
-  // ---- export/import stubs (implemented in Task 2) ----
+  // ---- export/import (D-15) ----
 
-  async exportTemplate(): Promise<TemplateExportPackage> {
-    throw new Error("Not implemented");
+  async exportTemplate(name: string): Promise<TemplateExportPackage> {
+    const template = this.validateTemplateExists(this.templates.get(name), name);
+
+    if (template.status !== "published") {
+      throw new Error(
+        `Cannot export draft template "${name}". Publish it first.`
+      );
+    }
+
+    const { status: _status, eventVersion: _ev, lastPublishedVersion: _lpv, ...rest } = template;
+    void _status; void _ev; void _lpv;
+
+    return {
+      format: "feudal-template/v1",
+      template: rest,
+      exportedAt: this.now()
+    };
   }
 
-  async importTemplate(): Promise<TemplateExportPackage> {
-    throw new Error("Not implemented");
+  async importTemplate(pkg: TemplateExportPackage): Promise<WorkflowTemplate> {
+    if (pkg.format !== "feudal-template/v1") {
+      throw new Error(
+        `Unsupported template format: "${(pkg as { format: string }).format}". Expected "feudal-template/v1".`
+      );
+    }
+
+    if (this.templates.has(pkg.template.name)) {
+      throw new Error(`Template "${pkg.template.name}" already exists`);
+    }
+
+    const now = this.now();
+    const template: WorkflowTemplate = {
+      name: pkg.template.name,
+      version: pkg.template.version,
+      parameters: pkg.template.parameters,
+      steps: pkg.template.steps,
+      status: "draft",
+      createdAt: now,
+      updatedAt: now,
+      eventVersion: 1
+    };
+
+    this.templates.set(pkg.template.name, template);
+    this.recordEvent("template.created", 1, pkg.template.name, "draft");
+
+    return template;
   }
 }
