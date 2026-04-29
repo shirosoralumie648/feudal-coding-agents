@@ -9,6 +9,8 @@ import { createTaskReadModel } from "./persistence/task-read-model";
 import { createOrchestratorService } from "./services/orchestrator-service";
 import { createTaskRunGateway } from "./services/task-run-gateway";
 import { MemoryTaskStore, type TaskStore } from "./store";
+import { MemoryTemplateStore, type TemplateStore } from "./services/workflow-template-store";
+import { createWorkflowTemplateEngine, type WorkflowTemplateEngine } from "./services/workflow-template-engine";
 
 export function createACPClientFromEnv() {
   const baseUrl = process.env.ACP_BASE_URL ?? "http://127.0.0.1:4100";
@@ -121,3 +123,6 @@ export const defaultOrchestratorService = createOrchestratorService({
   runGateway: createTaskRunGatewayFromEnv(),
   store: createLazyTaskStore()
 });
+
+export const defaultTemplateStore: TemplateStore = new MemoryTemplateStore();
+export const defaultTemplateEngine = createWorkflowTemplateEngine();

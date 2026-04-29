@@ -2,10 +2,13 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { defaultOrchestratorService } from "./config";
 import { registerAgentRoutes } from "./routes/agents";
+import { registerMetricsRoutes } from "./routes/metrics";
 import { registerOperatorActionRoutes } from "./routes/operator-actions";
 import { registerReplayRoutes } from "./routes/replay";
 import { registerTaskRoutes } from "./routes/tasks";
+import { registerTemplateRoutes } from "./routes/templates";
 import type { OrchestratorService } from "./services/orchestrator-service";
+import { defaultTemplateStore, defaultTemplateEngine } from "./config";
 
 export function createControlPlaneApp(options?: {
   logger?: boolean;
@@ -17,8 +20,13 @@ export function createControlPlaneApp(options?: {
 
   registerAgentRoutes(app, service);
   registerTaskRoutes(app, service);
+  registerTemplateRoutes(app, {
+    store: defaultTemplateStore,
+    engine: defaultTemplateEngine
+  });
   registerOperatorActionRoutes(app, service);
   registerReplayRoutes(app, service);
+  registerMetricsRoutes(app);
 
   app.addHook("onReady", async () => {
     await service.rebuildProjectionsIfNeeded();
