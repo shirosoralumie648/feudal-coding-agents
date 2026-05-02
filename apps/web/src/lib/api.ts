@@ -1,5 +1,10 @@
 import type { ACPAgentManifest } from "@feudal/acp";
 import type {
+  AlertEvent,
+  AlertState,
+  AuditTrailQuery,
+  AuditTrailResponse,
+  MetricSnapshot,
   OperatorActionRecord,
   OperatorActionSummary,
   TaskRecord
@@ -174,4 +179,64 @@ export async function fetchOperatorSummary() {
 
 export async function fetchRecoverySummary() {
   return requestJson<RecoverySummary>("/api/recovery/summary");
+}
+
+export async function fetchAnalyticsSnapshot() {
+  return requestJson<MetricSnapshot | { status: string; message: string }>(
+    "/api/analytics/snapshot"
+  );
+}
+
+export function subscribeAnalytics(
+  onSnapshot: (snapshot: MetricSnapshot) => void,
+  onError?: () => void
+) {
+  const source = new EventSource("/api/analytics/stream");
+
+  source.onmessage = (event) => {
+    try {
+      const parsed = JSON.parse(event.data);
+
+      if (parsed.type === "snapshot" && parsed.payload) {
+        onSnapshot(parsed.payload as MetricSnapshot);
+      }
+    } catch {
+      // Ignore heartbeat comments and malformed frames.
+    }
+  };
+  source.onerror = () => {
+    onError?.();
+  };
+
+  return {
+    eventSource: source,
+    close: () => source.close()
+  };
+}
+
+export async function fetchAuditTrail(query: AuditTrailQuery) {
+  const params = new URLSearchParams();
+
+  if (query.taskId) params.set("taskId", query.taskId);
+  if (query.agentId) params.set("agentId", query.agentId);
+  if (query.eventType) params.set("eventType", query.eventType);
+  if (query.timeRange) {
+    params.set("timeRange[start]", query.timeRange.start);
+    params.set("timeRange[end]", query.timeRange.end);
+  }
+  if (query.searchQuery) params.set("searchQuery", query.searchQuery);
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.cursor) params.set("cursor", String(query.cursor));
+
+  return requestJson<AuditTrailResponse>(
+    `/api/analytics/audit-trail?${params.toString()}`
+  );
+}
+
+export async function fetchAlertStates() {
+  return requestJson<{ states: AlertState[] }>("/api/alerts/state");
+}
+
+export async function fetchPendingAlerts() {
+  return requestJson<{ alerts: AlertEvent[] }>("/api/alerts/pending");
 }

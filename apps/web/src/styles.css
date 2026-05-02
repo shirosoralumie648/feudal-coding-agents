@@ -126,6 +126,10 @@ textarea {
   grid-column: span 3;
 }
 
+.panel-analytics {
+  grid-column: 1 / -1;
+}
+
 .panel-header,
 .form-row,
 .task-summary,
@@ -178,6 +182,11 @@ textarea {
 .lane-card strong {
   display: block;
   font-size: 1.6rem;
+}
+
+.metric-row small {
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .lane-grid {
@@ -382,6 +391,33 @@ textarea {
   color: var(--muted);
 }
 
+.status-message {
+  margin: 0;
+  color: var(--muted);
+}
+
+.chart-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chart-card {
+  min-width: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 253, 249, 0.9);
+  border: 1px solid rgba(70, 38, 26, 0.08);
+}
+
+.chart-card h3 {
+  margin: 0 0 12px;
+}
+
+.chart-card-wide {
+  grid-column: 1 / -1;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -405,8 +441,13 @@ textarea {
   .panel-detail,
   .panel-replay,
   .panel-diff,
+  .panel-analytics,
   .panel-agents {
     grid-column: 1 / -1;
+  }
+
+  .chart-grid {
+    grid-template-columns: 1fr;
   }
 
   .lane-grid,
