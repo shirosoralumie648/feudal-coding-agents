@@ -2,11 +2,13 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { defaultOrchestratorService } from "./config";
 import { registerAgentRoutes } from "./routes/agents";
+import { registerAnalyticsRoutes } from "./routes/analytics";
 import { registerMetricsRoutes } from "./routes/metrics";
 import { registerOperatorActionRoutes } from "./routes/operator-actions";
 import { registerReplayRoutes } from "./routes/replay";
 import { registerTaskRoutes } from "./routes/tasks";
 import { registerTemplateRoutes } from "./routes/templates";
+import { AnalyticsService } from "./services/analytics-service";
 import type { OrchestratorService } from "./services/orchestrator-service";
 import { defaultTemplateStore, defaultTemplateEngine } from "./config";
 
@@ -14,9 +16,16 @@ export function createControlPlaneApp(options?: {
   logger?: boolean;
   onReady?: () => Promise<void>;
   service?: OrchestratorService;
+  analyticsService?: AnalyticsService;
 }) {
   const app = Fastify({ logger: options?.logger ?? true });
   const service = options?.service ?? defaultOrchestratorService;
+  const analyticsService =
+    options?.analyticsService ??
+    new AnalyticsService({
+      store: service,
+      intervalMs: 10000
+    });
 
   registerAgentRoutes(app, service);
   registerTaskRoutes(app, service);
@@ -27,10 +36,17 @@ export function createControlPlaneApp(options?: {
   registerOperatorActionRoutes(app, service);
   registerReplayRoutes(app, service);
   registerMetricsRoutes(app);
+  registerAnalyticsRoutes(app, { analyticsService });
 
   app.addHook("onReady", async () => {
     await service.rebuildProjectionsIfNeeded();
+    await analyticsService.pollMetrics();
+    analyticsService.start();
     await options?.onReady?.();
+  });
+
+  app.addHook("onClose", async () => {
+    analyticsService.stop();
   });
 
   return app;

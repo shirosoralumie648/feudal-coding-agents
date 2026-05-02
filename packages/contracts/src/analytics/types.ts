@@ -1,5 +1,19 @@
 import { z } from "zod";
-import { SystemTokenUsageSummarySchema } from "../index";
+
+const AnalyticsTokenUsageSummarySchema = z.object({
+  totalInputTokens: z.number().int().nonnegative(),
+  totalOutputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  byAgent: z.array(
+    z.object({
+      agent: z.string(),
+      inputTokens: z.number().int().nonnegative(),
+      outputTokens: z.number().int().nonnegative(),
+      totalTokens: z.number().int().nonnegative(),
+      runCount: z.number().int().nonnegative()
+    })
+  )
+});
 
 export const MetricSnapshotSchema = z.object({
   timestamp: z.string().datetime(),
@@ -12,7 +26,7 @@ export const MetricSnapshotSchema = z.object({
   recoveryRequired: z.number().int().nonnegative(),
   avgApprovalLatencyMs: z.number().nonnegative().nullable(),
   errorRate: z.number().min(0).max(1),
-  tokenUsage: SystemTokenUsageSummarySchema
+  tokenUsage: AnalyticsTokenUsageSummarySchema
 });
 
 export type MetricSnapshot = z.infer<typeof MetricSnapshotSchema>;
