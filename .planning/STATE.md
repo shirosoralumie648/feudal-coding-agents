@@ -12,7 +12,7 @@
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** 让 AI 代理能够可靠地协作完成复杂的软件开发任务，同时保持人类操作员的治理和监督能力。
-**Current focus:** Phase 5 插件架构已验证完成；下一步启动 Phase 6 性能优化讨论/规划
+**Current focus:** Phase 6 性能优化上下文已收集；下一步进入研究/规划
 
 ---
 
@@ -35,8 +35,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 ### In Progress
 - Phase 6: Performance Optimization
-  - Not started
-  - Next recommended step: `$gsd-discuss-phase 6`
+  - 06-CONTEXT.md captured targeted local performance/security hardening decisions
+  - Next recommended step: `$gsd-plan-phase 6`
 
 ### Recently Completed
 - ✓ 代码库映射完成 (7 个文档)
@@ -55,7 +55,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
   - 05-02: Plugin lifecycle API, enabled extension catalog, ACP gateway adapter
 
 ### Next Up
-1. Discuss Phase 6: Performance Optimization
+1. Plan Phase 6: Performance Optimization
    - PSC-01: 性能优化和缓存策略
    - PSC-03: 数据库查询优化（N+1 问题）
    - PSC-04: 输入验证和安全扫描
@@ -84,4 +84,4 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 - STATE.md 此次已从 Phase 2 之前的旧快照校正到 Phase 5 验证完成状态
 - 代码库映射提供了完整的技术债务分析
 - 8 个阶段已规划，36 个需求已分配
-- 使用 `$gsd-discuss-phase 6` 启动下一阶段
+- 使用 `$gsd-plan-phase 6` 规划下一阶段
