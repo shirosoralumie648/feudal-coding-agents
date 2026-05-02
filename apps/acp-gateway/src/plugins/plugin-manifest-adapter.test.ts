@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PluginManifest, PluginRecord } from "@feudal/contracts";
 import {
+  createPluginAgentMetadata,
+  isAcpWorkerExtension,
   pluginManifestToAgentRegistrations,
+  pluginRecordToAgentRegistrations,
   pluginRecordsToAgentRegistrations
 } from "./plugin-manifest-adapter";
 
@@ -60,7 +63,9 @@ function makeRecord(state: PluginRecord["state"]): PluginRecord {
 
 describe("plugin manifest adapter", () => {
   it("converts acp-worker extensions into agent registration inputs", () => {
-    const registrations = pluginManifestToAgentRegistrations(makeManifest());
+    const manifest = makeManifest();
+    const registrations = pluginManifestToAgentRegistrations(manifest);
+    const workerExtension = manifest.extensionPoints.find(isAcpWorkerExtension);
 
     expect(registrations).toHaveLength(1);
     expect(registrations[0]).toMatchObject({
@@ -78,6 +83,14 @@ describe("plugin manifest adapter", () => {
         enabledByDefault: true
       }
     });
+    expect(workerExtension).toBeDefined();
+    expect(createPluginAgentMetadata(manifest, workerExtension!)).toMatchObject(
+      {
+        pluginId: "local.gateway-plugin",
+        pluginVersion: "1.0.0",
+        extensionPoint: "acp-worker"
+      }
+    );
   });
 
   it("ignores workflow-step-provider extension points", () => {
@@ -110,6 +123,8 @@ describe("plugin manifest adapter", () => {
 
     expect(registrations).toHaveLength(1);
     expect(registrations[0]?.metadata?.pluginId).toBe("local.enabled-plugin");
+    expect(pluginRecordToAgentRegistrations(makeRecord("disabled"))).toEqual(
+      []
+    );
   });
 });
-

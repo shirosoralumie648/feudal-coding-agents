@@ -88,11 +88,9 @@ export function registerPluginRoutes(
 
   app.get("/api/plugins/extensions/enabled", async () => {
     if (extensionCatalog) {
-      return EnabledPluginExtensionsSchema.parse({
-        acpWorkers: await extensionCatalog.listAcpWorkers(),
-        workflowStepProviders:
-          await extensionCatalog.listWorkflowStepProviders()
-      });
+      return EnabledPluginExtensionsSchema.parse(
+        await extensionCatalog.listEnabledExtensions()
+      );
     }
 
     return EnabledPluginExtensionsSchema.parse(

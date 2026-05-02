@@ -82,6 +82,7 @@ describe("PluginExtensionCatalog", () => {
 
     const workers = await catalog.listAcpWorkers();
     const providers = await catalog.listWorkflowStepProviders();
+    const snapshot = await catalog.listEnabledExtensions();
 
     expect(workers.map((worker) => worker.workerName)).toEqual([
       "enabled-worker"
@@ -89,6 +90,40 @@ describe("PluginExtensionCatalog", () => {
     expect(providers.map((provider) => provider.providerId)).toEqual([
       "enabled-workflow-provider"
     ]);
+    expect(snapshot.acpWorkers).toHaveLength(1);
+    expect(snapshot.workflowStepProviders).toHaveLength(1);
+  });
+
+  it("finds enabled extension declarations by their runtime identifiers", async () => {
+    const store = new MemoryPluginStore();
+    await store.registerDiscovered({
+      manifest: makeManifest(),
+      source: { kind: "inline" }
+    });
+    const catalog = new PluginExtensionCatalog(store);
+
+    await expect(catalog.hasAcpWorker("enabled-worker")).resolves.toBe(true);
+    await expect(catalog.hasAcpWorker("missing-worker")).resolves.toBe(false);
+    await expect(
+      catalog.hasWorkflowStepProvider("enabled-workflow-provider")
+    ).resolves.toBe(true);
+    await expect(
+      catalog.hasWorkflowStepProvider("missing-provider")
+    ).resolves.toBe(false);
+    await expect(catalog.getAcpWorker("enabled-worker")).resolves.toMatchObject(
+      { workerName: "enabled-worker" }
+    );
+    await expect(
+      catalog.getWorkflowStepProvider("enabled-workflow-provider")
+    ).resolves.toMatchObject({ providerId: "enabled-workflow-provider" });
+    await expect(catalog.listAcpWorkerNames()).resolves.toEqual([
+      "enabled-worker"
+    ]);
+    await expect(catalog.listWorkflowStepProviderIds()).resolves.toEqual([
+      "enabled-workflow-provider"
+    ]);
+    await expect(catalog.listWorkflowStepTypes()).resolves.toEqual([
+      "deployment"
+    ]);
   });
 });
-
