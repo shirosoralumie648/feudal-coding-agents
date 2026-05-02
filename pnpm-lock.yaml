@@ -23,6 +23,9 @@ importers:
       '@feudal/acp':
         specifier: workspace:*
         version: link:../../packages/acp
+      '@feudal/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@feudal/persistence':
         specifier: workspace:*
         version: link:../../packages/persistence
