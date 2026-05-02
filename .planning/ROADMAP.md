@@ -149,7 +149,9 @@ Plans:
 - [x] 05-01-PLAN.md -- Plugin manifest contracts, internal SDK helpers, lifecycle store, and local manifest discovery
 
 **Wave 2 (blocked on Wave 1 completion)**
-- [ ] 05-02-PLAN.md -- Plugin lifecycle API, enabled extension catalog, and ACP gateway adapter
+- [x] 05-02-PLAN.md -- Plugin lifecycle API, enabled extension catalog, and ACP gateway adapter
+
+**Status:** Complete (verified 2026-05-02)
 
 Cross-cutting constraints:
 - Plugin lifecycle operations fail closed on invalid manifests, unsafe entry paths, duplicate ids, incompatible manifests, and failed reloads.
