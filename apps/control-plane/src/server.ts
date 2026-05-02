@@ -1,18 +1,28 @@
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
-import { defaultOrchestratorService } from "./config";
+import {
+  defaultOrchestratorService,
+  defaultPluginDiscovery,
+  defaultPluginExtensionCatalog,
+  defaultPluginStore,
+  defaultTemplateEngine,
+  defaultTemplateStore
+} from "./config";
 import { registerAgentRoutes } from "./routes/agents";
 import { registerAlertRoutes } from "./routes/alerts";
 import { registerAnalyticsRoutes } from "./routes/analytics";
 import { registerMetricsRoutes } from "./routes/metrics";
 import { registerOperatorActionRoutes } from "./routes/operator-actions";
+import { registerPluginRoutes } from "./routes/plugins";
 import { registerReplayRoutes } from "./routes/replay";
 import { registerTaskRoutes } from "./routes/tasks";
 import { registerTemplateRoutes } from "./routes/templates";
 import { AlertService } from "./services/alert-service";
 import { AnalyticsService } from "./services/analytics-service";
 import type { OrchestratorService } from "./services/orchestrator-service";
-import { defaultTemplateStore, defaultTemplateEngine } from "./config";
+import type { PluginDiscovery } from "./services/plugin-discovery";
+import type { PluginExtensionCatalog } from "./services/plugin-extension-catalog";
+import type { PluginStore } from "./services/plugin-store";
 
 export function createControlPlaneApp(options?: {
   logger?: boolean;
@@ -20,6 +30,9 @@ export function createControlPlaneApp(options?: {
   service?: OrchestratorService;
   analyticsService?: AnalyticsService;
   alertService?: AlertService;
+  pluginStore?: PluginStore;
+  pluginDiscovery?: PluginDiscovery;
+  pluginExtensionCatalog?: PluginExtensionCatalog;
 }) {
   const app = Fastify({ logger: options?.logger ?? true });
   const service = options?.service ?? defaultOrchestratorService;
@@ -43,6 +56,12 @@ export function createControlPlaneApp(options?: {
   registerTemplateRoutes(app, {
     store: defaultTemplateStore,
     engine: defaultTemplateEngine
+  });
+  registerPluginRoutes(app, {
+    store: options?.pluginStore ?? defaultPluginStore,
+    discovery: options?.pluginDiscovery ?? defaultPluginDiscovery,
+    extensionCatalog:
+      options?.pluginExtensionCatalog ?? defaultPluginExtensionCatalog
   });
   registerOperatorActionRoutes(app, service);
   registerReplayRoutes(app, service);

@@ -7,6 +7,9 @@ import {
 } from "@feudal/persistence";
 import { createTaskReadModel } from "./persistence/task-read-model";
 import { createOrchestratorService } from "./services/orchestrator-service";
+import { PluginDiscovery } from "./services/plugin-discovery";
+import { PluginExtensionCatalog } from "./services/plugin-extension-catalog";
+import { MemoryPluginStore } from "./services/plugin-store";
 import { createTaskRunGateway } from "./services/task-run-gateway";
 import { MemoryTaskStore, type TaskStore } from "./store";
 import { MemoryTemplateStore, type TemplateStore } from "./services/workflow-template-store";
@@ -126,3 +129,18 @@ export const defaultOrchestratorService = createOrchestratorService({
 
 export const defaultTemplateStore: TemplateStore = new MemoryTemplateStore();
 export const defaultTemplateEngine = createWorkflowTemplateEngine();
+
+export function getPluginRootsFromEnv(): string[] {
+  return (process.env.FEUDAL_PLUGIN_DIRS ?? "plugins")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+export const defaultPluginStore = new MemoryPluginStore();
+export const defaultPluginDiscovery = new PluginDiscovery({
+  roots: getPluginRootsFromEnv()
+});
+export const defaultPluginExtensionCatalog = new PluginExtensionCatalog(
+  defaultPluginStore
+);

@@ -7,6 +7,7 @@ import {
 } from "@feudal/contracts";
 import { PluginDiscovery } from "../services/plugin-discovery";
 import type { PluginDiscoveryResult } from "../services/plugin-discovery";
+import type { PluginExtensionCatalog } from "../services/plugin-extension-catalog";
 import {
   MemoryPluginStore,
   type PluginStore
@@ -59,11 +60,13 @@ export function registerPluginRoutes(
   options?: {
     store?: PluginStore;
     discovery?: PluginDiscovery;
+    extensionCatalog?: PluginExtensionCatalog;
   }
 ) {
   const store = options?.store ?? new MemoryPluginStore();
   const discovery =
     options?.discovery ?? new PluginDiscovery({ roots: ["plugins"] });
+  const extensionCatalog = options?.extensionCatalog;
 
   app.get("/api/plugins", async (request, reply) => {
     const query = parseOrReply(ListPluginsQuery, request.query ?? {}, reply);
@@ -84,6 +87,14 @@ export function registerPluginRoutes(
   });
 
   app.get("/api/plugins/extensions/enabled", async () => {
+    if (extensionCatalog) {
+      return EnabledPluginExtensionsSchema.parse({
+        acpWorkers: await extensionCatalog.listAcpWorkers(),
+        workflowStepProviders:
+          await extensionCatalog.listWorkflowStepProviders()
+      });
+    }
+
     return EnabledPluginExtensionsSchema.parse(
       await store.listEnabledExtensions()
     );
@@ -199,4 +210,3 @@ export function registerPluginRoutes(
     }
   });
 }
-
