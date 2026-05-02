@@ -144,6 +144,18 @@ Plans:
 
 **Dependencies:** None
 
+Plans:
+**Wave 1**
+- [ ] 05-01-PLAN.md -- Plugin manifest contracts, internal SDK helpers, lifecycle store, and local manifest discovery
+
+**Wave 2 (blocked on Wave 1 completion)**
+- [ ] 05-02-PLAN.md -- Plugin lifecycle API, enabled extension catalog, and ACP gateway adapter
+
+Cross-cutting constraints:
+- Plugin lifecycle operations fail closed on invalid manifests, unsafe entry paths, duplicate ids, incompatible manifests, and failed reloads.
+- Control-plane owns plugin registry truth; ACP gateway consumes only enabled declarations through explicit adapters.
+- Plugin reload is manual API-triggered reload, not filesystem watching.
+
 ---
 
 ### Phase 6: Performance Optimization
