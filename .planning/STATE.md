@@ -12,7 +12,7 @@
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** 让 AI 代理能够可靠地协作完成复杂的软件开发任务，同时保持人类操作员的治理和监督能力。
-**Current focus:** Phase 6 性能优化上下文已收集；下一步进入研究/规划
+**Current focus:** Phase 6 性能优化已完成研究和规划；下一步进入执行
 
 ---
 
@@ -25,7 +25,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 | 3 | Workflow Templates | Complete | 2 | 2/2 | - |
 | 4 | Analytics Platform | Complete | 3 | 3/3 | - |
 | 5 | Plugin Architecture | Complete | 2 | 2/2 | - |
-| 6 | Performance Optimization | Not Started | 3 | 0/3 | - |
+| 6 | Performance Optimization | Ready to execute | 3 | 0/3 | - |
 | 7 | Advanced Multi-Agent | Not Started | 2 | 0/2 | Phase 2 |
 | 8 | Plugin Ecosystem | Not Started | 2 | 0/2 | Phase 5 |
 
@@ -36,7 +36,13 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ### In Progress
 - Phase 6: Performance Optimization
   - 06-CONTEXT.md captured targeted local performance/security hardening decisions
-  - Next recommended step: `$gsd-plan-phase 6`
+  - 06-RESEARCH.md, 06-PATTERNS.md, 06-VALIDATION.md captured implementation and verification strategy
+  - 4 executable plans created:
+    - 06-01: Metrics route wiring and in-process metrics cache
+    - 06-02: Query fan-out reduction in task read model and analytics audit loading
+    - 06-03: Execution-path security scanner enforcement
+    - 06-04: Explicit TypeScript typecheck gate and package-manager guard
+  - Next recommended step: `$gsd-execute-phase 6`
 
 ### Recently Completed
 - ✓ 代码库映射完成 (7 个文档)
@@ -55,10 +61,10 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
   - 05-02: Plugin lifecycle API, enabled extension catalog, ACP gateway adapter
 
 ### Next Up
-1. Plan Phase 6: Performance Optimization
-   - PSC-01: 性能优化和缓存策略
-   - PSC-03: 数据库查询优化（N+1 问题）
-   - PSC-04: 输入验证和安全扫描
+1. Execute Phase 6: Performance Optimization
+   - Wave 1: 06-01 metrics cache/wiring, 06-02 query fan-out reduction
+   - Wave 2: 06-03 security scanner enforcement
+   - Wave 3: 06-04 typecheck gate
 
 ---
 
@@ -84,4 +90,4 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 - STATE.md 此次已从 Phase 2 之前的旧快照校正到 Phase 5 验证完成状态
 - 代码库映射提供了完整的技术债务分析
 - 8 个阶段已规划，36 个需求已分配
-- 使用 `$gsd-plan-phase 6` 规划下一阶段
+- 使用 `$gsd-execute-phase 6` 执行下一阶段

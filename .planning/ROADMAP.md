@@ -178,6 +178,24 @@ Cross-cutting constraints:
 
 **Dependencies:** None
 
+Plans:
+**Wave 1**
+- [ ] 06-01-PLAN.md -- Metrics route wiring and in-process metrics cache
+- [ ] 06-02-PLAN.md -- Query fan-out reduction in task read model and analytics audit loading
+
+**Wave 2 (blocked on Wave 1 completion)**
+- [ ] 06-03-PLAN.md -- Execution-path security scanner enforcement
+
+**Wave 3 (blocked on Wave 2 completion)**
+- [ ] 06-04-PLAN.md -- Explicit TypeScript typecheck gate and package-manager guard
+
+Cross-cutting constraints:
+- Phase 6 is targeted hardening of current default app paths, not a broad rewrite.
+- Cache strategy is in-process only; no Redis, queue, SaaS scanner, or distributed cache topology.
+- Event-sourced projections remain source of truth; rebuild checkpoints and replay behavior must stay intact.
+- Token metrics remain explicit placeholders unless real token metadata exists.
+- Verification uses focused Vitest slices, then `pnpm typecheck`, `pnpm test`, and `pnpm build` where practical.
+
 ---
 
 ### Phase 7: Advanced Multi-Agent
