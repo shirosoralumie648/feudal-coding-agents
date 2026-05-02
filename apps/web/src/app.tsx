@@ -9,7 +9,10 @@ import type {
   TaskStatus
 } from "@feudal/contracts";
 import { AgentRegistryPanel } from "./components/agent-registry-panel";
+import { AlertPanel } from "./components/alert-panel";
+import { AnalyticsDashboard } from "./components/analytics-dashboard";
 import { ApprovalInboxPanel } from "./components/approval-inbox-panel";
+import { AuditTrailViewer } from "./components/audit-trail-viewer";
 import { DiffInspectorPanel } from "./components/diff-inspector-panel";
 import { NewTaskPanel } from "./components/new-task-panel";
 import { OperatorQueuePanel } from "./components/operator-queue-panel";
@@ -517,6 +520,8 @@ export function App() {
 
       {error ? <p className="error-banner">{error}</p> : null}
 
+      <AlertPanel />
+
       <main className="console-grid">
         <section className="panel panel-overview">
           <div className="panel-header">
@@ -556,6 +561,7 @@ export function App() {
             })}
           </div>
         </section>
+        <AnalyticsDashboard />
 
         <NewTaskPanel
           canSubmit={canSubmit}
@@ -637,6 +643,7 @@ export function App() {
           replayTask={selectedReplayTask}
           taskTitle={selectedTask?.title ?? "Task"}
         />
+        <AuditTrailViewer />
         <DiffInspectorPanel diffs={selectedTaskDiffs} />
         <ApprovalInboxPanel
           activeTaskId={activeGovernanceId}

@@ -191,6 +191,15 @@ export function subscribeAnalytics(
   onSnapshot: (snapshot: MetricSnapshot) => void,
   onError?: () => void
 ) {
+  if (typeof EventSource === "undefined") {
+    onError?.();
+
+    return {
+      eventSource: undefined,
+      close: () => undefined
+    };
+  }
+
   const source = new EventSource("/api/analytics/stream");
 
   source.onmessage = (event) => {

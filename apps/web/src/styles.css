@@ -126,8 +126,16 @@ textarea {
   grid-column: span 3;
 }
 
+.panel-audit {
+  grid-column: 1 / -1;
+}
+
 .panel-analytics {
   grid-column: 1 / -1;
+}
+
+.panel-alerts {
+  margin-bottom: 18px;
 }
 
 .panel-header,
@@ -210,7 +218,8 @@ textarea {
 
 .task-form input,
 .task-form select,
-.task-form textarea {
+.task-form textarea,
+.filter-bar input {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid rgba(70, 38, 26, 0.12);
@@ -235,7 +244,10 @@ textarea {
 
 .task-form button,
 .operator-console-panel button,
-.detail-list button {
+.detail-list button,
+.filter-bar button,
+.panel-alerts button,
+.panel-audit button {
   padding: 12px 16px;
   border: none;
   border-radius: 999px;
@@ -347,6 +359,7 @@ textarea {
 
 .button-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -389,6 +402,100 @@ textarea {
 
 .empty-state {
   color: var(--muted);
+}
+
+.filter-bar {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.audit-timeline .payload-summary,
+.payload-summary,
+.alert-message {
+  margin: 0;
+  color: var(--muted);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(70, 38, 26, 0.1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.truncate {
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.load-more {
+  margin-top: 16px;
+}
+
+.alert-rule-count {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.alert-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-item {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-left: 4px solid var(--muted);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, 0.9);
+}
+
+.alert-firing {
+  border-left-color: #dc2626;
+}
+
+.alert-resolved {
+  border-left-color: #059669;
+}
+
+.alert-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.text-danger {
+  color: #dc2626;
+}
+
+.text-success {
+  color: #059669;
 }
 
 .status-message {
@@ -441,9 +548,14 @@ textarea {
   .panel-detail,
   .panel-replay,
   .panel-diff,
+  .panel-audit,
   .panel-analytics,
   .panel-agents {
     grid-column: 1 / -1;
+  }
+
+  .filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .chart-grid {
@@ -457,6 +569,7 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .filter-bar,
   .lane-grid,
   .metric-row {
     grid-template-columns: 1fr;
