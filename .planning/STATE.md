@@ -12,7 +12,7 @@
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** 让 AI 代理能够可靠地协作完成复杂的软件开发任务，同时保持人类操作员的治理和监督能力。
-**Current focus:** Phase 5 已完成上下文收集和计划创建，准备执行插件架构实现
+**Current focus:** Phase 5 正在执行插件架构实现；05-01 已完成，准备执行 05-02
 
 ---
 
@@ -24,7 +24,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 | 2 | Multi-Agent Foundation | Complete | 3 | 3/3 | - |
 | 3 | Workflow Templates | Complete | 2 | 2/2 | - |
 | 4 | Analytics Platform | Complete | 3 | 3/3 | - |
-| 5 | Plugin Architecture | Ready to Execute | 2 | 0/2 | - |
+| 5 | Plugin Architecture | In Progress | 2 | 1/2 | - |
 | 6 | Performance Optimization | Not Started | 3 | 0/3 | - |
 | 7 | Advanced Multi-Agent | Not Started | 2 | 0/2 | Phase 2 |
 | 8 | Plugin Ecosystem | Not Started | 2 | 0/2 | Phase 5 |
@@ -36,7 +36,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ### In Progress
 - Phase 5: Plugin Architecture
   - 05-CONTEXT.md captured local-first trusted plugin architecture decisions
-  - 05-01-PLAN.md ready: plugin contracts, internal SDK helpers, lifecycle store, local discovery
+  - 05-01-PLAN.md complete: plugin contracts, internal SDK helpers, lifecycle store, local discovery
   - 05-02-PLAN.md ready: lifecycle API, enabled extension catalog, ACP gateway adapter
 
 ### Recently Completed
