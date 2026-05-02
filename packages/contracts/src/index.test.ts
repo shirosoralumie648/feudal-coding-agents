@@ -4,6 +4,7 @@ import {
   OperatorActionRecordSchema,
   OperatorActionRequestSchema,
   OperatorActionSummarySchema,
+  PluginManifestSchema,
   RecoveryStateSchema,
   TaskRecordSchema,
   TaskSpecSchema,
@@ -11,6 +12,33 @@ import {
 } from "./index";
 
 describe("contracts", () => {
+  it("exports plugin manifest schemas from the root contract module", () => {
+    const result = PluginManifestSchema.parse({
+      id: "local.agent-plugin",
+      name: "Local Agent Plugin",
+      version: "1.0.0",
+      capabilities: ["agent-registration"],
+      extensionPoints: [
+        {
+          type: "acp-worker",
+          id: "local.agent-plugin.worker",
+          workerName: "local-worker",
+          displayName: "Local Worker",
+          capabilities: ["assignment"],
+          artifactName: "assignment.json"
+        }
+      ],
+      entry: {
+        module: "dist/index.js"
+      },
+      compatibility: {
+        app: "feudal-coding-agents"
+      }
+    });
+
+    expect(result.id).toBe("local.agent-plugin");
+  });
+
   it("accepts a new task spec", () => {
     const result = TaskSpecSchema.parse({
       id: "task-1",

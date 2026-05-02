@@ -316,6 +316,7 @@ export const SystemTokenUsageSummarySchema = z.object({
 // Governance types (RBAC)
 export * from "./governance/index";
 export * from "./analytics";
+export * from "./plugins";
 
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 export type WorkflowPhase = z.infer<typeof WorkflowPhaseSchema>;
