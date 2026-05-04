@@ -1,189 +1,111 @@
-# Codebase Stack
+# Technology Stack
 
-**Generated:** 2026-05-02  
-**Scope:** full repository  
-**Source priority:** code, package manifests, config files, tests, then docs
+**Analysis Date:** 2026-05-04
 
-## Summary
+## Languages
 
-This repository is a TypeScript pnpm workspace for a single-machine, single-user governance system around AI coding agents. The runtime is split into a Fastify control plane, a Fastify ACP gateway, a Vite/React web console, and shared workspace packages.
+**Primary:**
+- TypeScript - all application and package source under `apps/**/*.ts`, `apps/**/*.tsx`, and `packages/**/*.ts`.
+- TSX / React JSX - web console UI in `apps/web/src/app.tsx`, `apps/web/src/main.tsx`, and `apps/web/src/components/*.tsx`.
 
-The current system is not a large distributed agent cluster. The implemented runtime is the code in `apps/*` and `packages/*`, with historical design language kept in docs as context.
+**Secondary:**
+- CSS - web console styling in `apps/web/src/styles.css`.
+- JSON - package manifests, plugin manifests, alert rules, and TypeScript config in `package.json`, `plugins/examples/code-review-bot/plugin.json`, `apps/control-plane/config/alert-rules.json`, and `tsconfig.base.json`.
+- Markdown - project and planning docs in `README.md`, `docs/ARCHITECTURE.md`, `docs/plugins/sdk.md`, and `.planning/**`.
 
-## Runtime Platform
+## Runtime
 
-- Node.js 20 is the CI baseline in `.github/workflows/ci.yml`.
-- pnpm 10 is the package manager, declared in `package.json`.
-- TypeScript is the primary language across all apps and packages.
-- ESM is used in app/package manifests via `"type": "module"`.
-- Shared compiler settings live in `tsconfig.base.json`.
-- Workspace membership is defined by `pnpm-workspace.yaml` with `apps/*` and `packages/*`.
+**Environment:**
+- Node.js 20+ is the documented runtime in `README.md`; CI uses Node 20 in `.github/workflows/ci.yml`.
+- pnpm 10 is the package manager declared by `"packageManager": "pnpm@10.0.0"` in `package.json`.
+- All runtime packages use ESM via `"type": "module"` in `apps/*/package.json` and `packages/*/package.json`.
+- TypeScript targets ES2022 with `moduleResolution: "Bundler"` in `tsconfig.base.json`.
 
-## Root Scripts
+**Workspace:**
+- `pnpm-workspace.yaml` declares `apps/*` and `packages/*`.
+- Root scripts in `package.json` are the authoritative command surface:
+  - `pnpm dev`
+  - `pnpm test`
+  - `pnpm build`
+  - `pnpm typecheck`
+  - `pnpm db:migrate`
+  - `pnpm e2e`
 
-Root scripts in `package.json`:
+## Frameworks and Libraries
 
-- `pnpm dev`: runs `@feudal/acp-gateway`, `@feudal/control-plane`, and `@feudal/web` together.
-- `pnpm test`: runs the Vitest workspace through `vitest.config.ts`.
-- `pnpm build`: builds `@feudal/web`.
-- `pnpm e2e`: runs Playwright tests in `apps/web`.
-- `pnpm db:migrate`: runs the persistence package migrations.
+**Backend:**
+- Fastify - HTTP APIs in `apps/control-plane/src/server.ts` and `apps/acp-gateway/src/server.ts`.
+- Zod - schemas and runtime validation in `packages/contracts/src/index.ts`, `packages/contracts/src/plugins/types.ts`, `packages/contracts/src/analytics/types.ts`, and route modules under `apps/*/src/routes`.
+- `pg` - optional PostgreSQL connectivity in `packages/persistence/src/postgres.ts` and event-store operations in `packages/persistence/src/event-store.ts`.
 
-There is no root lint, format, or typecheck script in `package.json`; quality gates are currently test/build centered.
+**Frontend:**
+- React 19 - operator console UI in `apps/web/src/app.tsx`.
+- React DOM - browser mount in `apps/web/src/main.tsx`.
+- Vite - dev server, preview, build, and Vitest integration in `apps/web/vite.config.ts`.
+- Recharts - analytics visualization dependency used by `apps/web/src/components/analytics-dashboard.tsx`.
 
-## Shared TypeScript Configuration
+**Testing:**
+- Vitest - root workspace runner in `vitest.config.ts` and app/package `test` scripts.
+- jsdom and Testing Library - web tests configured by `apps/web/vite.config.ts` and `apps/web/src/test/setup.ts`.
+- Playwright - browser E2E in `apps/web/e2e/*.spec.ts` with config in `apps/web/playwright.config.ts`.
+- pg-mem - Postgres-like tests in `packages/persistence/src/event-store.test.ts`, `apps/control-plane/src/persistence/task-read-model.test.ts`, and `apps/acp-gateway/src/persistence/run-read-model.test.ts`.
 
-`tsconfig.base.json` sets:
+**Development tooling:**
+- `tsx` - dev server and migration runtime in `apps/control-plane/package.json`, `apps/acp-gateway/package.json`, and `packages/persistence/package.json`.
+- TypeScript compiler - explicit root gate through `tsconfig.typecheck.json`.
+- GitHub Actions - install, Playwright Chromium install, tests, build, and E2E in `.github/workflows/ci.yml`.
 
-- `target`: `ES2022`
-- `module`: `ESNext`
-- `moduleResolution`: `Bundler`
-- `strict`: `true`
-- `baseUrl`: repository root
-- path aliases for `@feudal/contracts`, `@feudal/orchestrator`, and `@feudal/acp`
+## Workspace Packages
 
-The path aliases point directly to source files such as `packages/contracts/src/index.ts`, so local package consumers run against source rather than built artifacts during development.
+**Applications:**
+- `@feudal/control-plane` in `apps/control-plane`: Fastify task, governance, replay, analytics, alert, plugin, template, RBAC, and orchestration API.
+- `@feudal/acp-gateway` in `apps/acp-gateway`: Fastify ACP run service, Codex worker execution bridge, agent registry, messaging, health, failover, scheduler, and plugin adapter boundary.
+- `@feudal/web` in `apps/web`: Vite + React console for overview, task detail, approvals, operator actions, replay, analytics, alerts, agent registry, and plugin ecosystem.
 
-## Applications
+**Shared packages:**
+- `@feudal/contracts` in `packages/contracts`: shared Zod schemas and TypeScript types for tasks, runs, governance, analytics, RBAC, plugins, and token usage.
+- `@feudal/orchestrator` in `packages/orchestrator`: deterministic task state machine in `packages/orchestrator/src/task-machine.ts`.
+- `@feudal/acp` in `packages/acp`: ACP protocol types plus mock and HTTP clients in `packages/acp/src/mock-client.ts` and `packages/acp/src/http-client.ts`.
+- `@feudal/persistence` in `packages/persistence`: Postgres pool, migrations, event store, and exports.
 
-### `apps/control-plane`
+## Configuration
 
-`apps/control-plane/package.json` defines the task/governance API app.
+**Environment variables:**
+- `DATABASE_URL` enables PostgreSQL-backed task and run projections; absence selects in-memory stores.
+- `ACP_BASE_URL` points the control plane to the ACP gateway; default is `http://127.0.0.1:4100`.
+- `FEUDAL_ACP_MODE=mock` selects the mock ACP client; default is HTTP ACP.
+- `PORT` selects backend listen ports: control plane defaults to 4000 and ACP gateway defaults to 4100.
+- `ALERT_WEBHOOK_URL` enables webhook alert delivery in `apps/control-plane/src/services/alert-service.ts`.
+- `FEUDAL_PLUGIN_DIRS` configures local plugin roots; default roots are `plugins` and `plugins/examples`.
+- `npm_package_version` is read by metrics routes for version metadata.
 
-Key dependencies:
+**Build and checks:**
+- `tsconfig.base.json` defines strict shared compiler settings and workspace aliases.
+- `tsconfig.typecheck.json` typechecks app and package implementation files while excluding tests, E2E, and generated outputs.
+- `vitest.config.ts` declares projects for all apps and packages.
+- `apps/web/vite.config.ts` proxies `/api` to the control plane and configures jsdom tests.
+- `apps/web/playwright.config.ts` starts the control plane in mock ACP mode and a web preview server.
 
-- `fastify` for HTTP routing.
-- `zod` for request and domain validation.
-- `@feudal/contracts` for task, run, governance, recovery, RBAC, and metrics schemas.
-- `@feudal/orchestrator` for deterministic task transitions.
-- `@feudal/acp` for mock and HTTP ACP clients.
-- `@feudal/persistence` for optional Postgres event persistence.
-- `tsx` for development execution.
-- `pg-mem` for database-like tests.
+## Platform Requirements
 
-Important entry points:
+**Development:**
+- Use Node.js 20+ and pnpm 10.
+- Run commands from the repository root.
+- Install dependencies with `pnpm install`.
+- Start all apps with `pnpm dev`.
+- Start individual services with `pnpm --filter @feudal/control-plane dev`, `pnpm --filter @feudal/acp-gateway dev`, or `pnpm --filter @feudal/web dev`.
+- Apply database migrations with `pnpm db:migrate` when `DATABASE_URL` is configured.
 
-- `apps/control-plane/src/server.ts`
-- `apps/control-plane/src/config.ts`
-- `apps/control-plane/src/services/orchestrator-service.ts`
+**Production shape:**
+- The current checkout has no Dockerfile, compose file, deployment manifest, or hosting adapter.
+- Backend production runtime is Node/Fastify.
+- Durable production state requires PostgreSQL via `DATABASE_URL`; otherwise task, run, registry, scheduler, and plugin state are process-local or memory-backed depending on subsystem.
 
-### `apps/acp-gateway`
+## Tooling Gaps
 
-`apps/acp-gateway/package.json` defines the ACP run service and worker execution bridge.
+- No ESLint, Prettier, Biome, `.nvmrc`, `.node-version`, Dockerfile, or compose file is detected.
+- A `package-lock.json` exists in the working tree even though pnpm is the authoritative package manager.
 
-Key dependencies:
+---
 
-- `fastify` for run, agent registry, messaging, and health routes.
-- `zod` for route payloads and protocol schemas.
-- `@feudal/acp` for ACP contracts and clients.
-- `@feudal/persistence` for optional run event persistence.
-- `tsx` for development execution.
-- `pg-mem` for persistence tests.
-
-Important entry points:
-
-- `apps/acp-gateway/src/server.ts`
-- `apps/acp-gateway/src/routes/runs.ts`
-- `apps/acp-gateway/src/workers/worker-runner.ts`
-- `apps/acp-gateway/src/codex/exec.ts`
-
-### `apps/web`
-
-`apps/web/package.json` defines the React console.
-
-Key dependencies:
-
-- React 19 and React DOM 19.
-- Vite 7 with `@vitejs/plugin-react`.
-- `@testing-library/react` and `@testing-library/jest-dom` for component tests.
-- Playwright for browser E2E.
-- `jsdom` for Vitest browser-like tests.
-- `@feudal/contracts` for typed task/projection data.
-
-Important entry points:
-
-- `apps/web/src/main.tsx`
-- `apps/web/src/app.tsx`
-- `apps/web/src/hooks/use-task-console.ts`
-- `apps/web/src/lib/api.ts`
-
-## Packages
-
-### `packages/contracts`
-
-`packages/contracts/src/index.ts` exports the shared Zod schemas and inferred TypeScript types for:
-
-- task status and workflow phase vocabulary
-- governance actions and operator actions
-- task records and task projections
-- run summaries and run projections
-- recovery summary contracts
-- token usage metrics contracts
-
-Additional governance contracts live under `packages/contracts/src/governance/`, including RBAC, rule engine, and auto-approval schemas.
-
-### `packages/orchestrator`
-
-`packages/orchestrator/src/task-machine.ts` is the deterministic task state machine. It defines task events and valid transitions between states such as `draft`, `intake`, `planning`, `review`, `awaiting_approval`, `dispatching`, `executing`, `verifying`, and terminal states.
-
-### `packages/acp`
-
-`packages/acp/src/index.ts` defines ACP messages, artifacts, manifests, runs, and the `ACPClient` interface.
-
-Client implementations:
-
-- `packages/acp/src/mock-client.ts`
-- `packages/acp/src/http-client.ts`
-
-### `packages/persistence`
-
-`packages/persistence/src/event-store.ts` implements the Postgres-backed append-only event store.
-
-`packages/persistence/src/migrations.ts` creates:
-
-- `event_log`
-- `projection_checkpoint`
-- `tasks_current`
-- `task_history_entries`
-- `runs_current`
-- `artifacts_current`
-- `operator_actions`
-
-`packages/persistence/src/postgres.ts` configures `pg` and validates `DATABASE_URL`.
-
-## Testing Stack
-
-- Vitest 3 is the unit and integration runner.
-- The root `vitest.config.ts` enumerates all app/package projects.
-- `pg-mem` is used for Postgres-like tests in persistence-facing code.
-- Playwright 1.55 runs web E2E tests from `apps/web/e2e`.
-- `apps/web/vite.config.ts` configures `jsdom` and excludes E2E folders from unit tests.
-
-## Build and Dev Server Stack
-
-- `apps/control-plane` runs via `tsx watch src/server.ts` and defaults to port `4000`.
-- `apps/acp-gateway` runs via `tsx watch src/server.ts` and defaults to port `4100`.
-- `apps/web` runs via Vite and proxies `/api` to `http://127.0.0.1:4000`.
-- `apps/web/playwright.config.ts` starts the control plane with `FEUDAL_ACP_MODE=mock` for E2E.
-
-## Configuration and Environment
-
-Environment variables currently used by code:
-
-- `DATABASE_URL`: enables Postgres-backed task/run stores. Without it, memory stores are used.
-- `PORT`: controls Fastify listen ports for both apps.
-- `ACP_BASE_URL`: control-plane HTTP ACP target; defaults to `http://127.0.0.1:4100`.
-- `FEUDAL_ACP_MODE`: `mock` switches control-plane execution to mock ACP behavior.
-- `npm_package_version`: exposed by `/metrics/health` when available.
-
-## Current Build Artifacts and Generated Output
-
-Generated or local-only directories exist in the working tree, including:
-
-- `apps/web/dist`
-- `apps/web/playwright-report`
-- `apps/web/test-results`
-- app/package `node_modules`
-
-These are not source-of-truth for mapping. Source and config files under `apps/*/src`, `packages/*/src`, root config, and CI are authoritative.
-
+*Stack analysis: 2026-05-04*

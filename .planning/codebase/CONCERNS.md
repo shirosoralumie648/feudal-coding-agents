@@ -1,233 +1,230 @@
 # Concerns
 
-**Generated:** 2026-05-02  
-**Scope:** full repository  
-**Source priority:** code, package manifests, config files, tests, then docs
+**Analysis Date:** 2026-05-04
 
 ## Summary
 
-The codebase has a solid local MVP shape: task orchestration, governance, run execution, replay, projections, and web console flows are present. The main risks are not missing source files. They are wiring gaps, process-local implementations being described as broader runtime features, large concentration files, and missing engineering gates.
+The codebase has a broad local MVP: task orchestration, governance, replay, optional persistence, web console flows, analytics/alerts, plugin lifecycle, ACP gateway registry/health/scheduling, and execution security scanning are present. The main risks are not absent source modules. They are process-local runtime semantics, large concentration files, placeholder metrics, and local-trusted assumptions that can be overstated as production-grade distributed behavior.
 
 ## High Priority
 
-### RBAC role routes are not registered
+### Process-local coordination should not be described as distributed
 
-Code exists in:
-
-- `apps/control-plane/src/routes/roles.ts`
-- `apps/control-plane/src/governance/rbac-policy.ts`
-- `apps/control-plane/src/governance/rbac-middleware.ts`
-- `packages/contracts/src/governance/rbac.ts`
-
-But `apps/control-plane/src/server.ts` does not call `registerRoleRoutes()`.
-
-Impact:
-
-- RBAC/role route functionality may be implemented but not reachable from the default control-plane app.
-- Tests that instantiate role routes directly would not prove production wiring.
-
-Recommended next check:
-
-- Decide whether role APIs are in current scope.
-- If yes, register them in `createControlPlaneApp()` and add a default-app route test.
-- If no, document them as inactive scaffolding.
-
-### Metrics route is registered without a store
-
-`apps/control-plane/src/routes/metrics.ts` can compute task/run aggregates if passed a `TaskStore`.
-
-`apps/control-plane/src/server.ts` currently calls:
-
-```ts
-registerMetricsRoutes(app);
-```
-
-Impact:
-
-- `GET /metrics` returns `metrics_unavailable` in the default app.
-- `GET /metrics/tokens` returns zero placeholder data.
-- Metrics docs or roadmap should not treat observability as complete.
-
-Recommended fix:
-
-- Pass the same task store/service dependency used by the orchestrator, or keep `/metrics` explicitly labeled as placeholder.
-
-### Template instantiation bypasses injected app dependencies
-
-`apps/control-plane/src/routes/templates.ts` accepts `store` and `engine` options, but the instantiate route calls `defaultOrchestratorService.createTask()` directly.
-
-Impact:
-
-- Tests or alternative app instances that inject stores/services can diverge from runtime behavior.
-- Template instantiation is less isolated than other route modules.
-
-Recommended fix:
-
-- Inject the task creation dependency into `registerTemplateRoutes()`.
-- Avoid importing `defaultOrchestratorService` inside the route module for behavior that should be app-scoped.
-
-### Process-local registry, messaging, and health state
-
-The ACP gateway has substantial code for registry, discovery, messaging, health, and failover:
-
+Implemented modules:
 - `apps/acp-gateway/src/agent-registry/registry.ts`
 - `apps/acp-gateway/src/agent-protocol/message-router.ts`
 - `apps/acp-gateway/src/agent-health/heartbeat-monitor.ts`
 - `apps/acp-gateway/src/agent-health/failover-handler.ts`
+- `apps/acp-gateway/src/agent-scheduler/scheduler.ts`
+- `apps/acp-gateway/src/agent-scheduler/bottleneck-analyzer.ts`
 
-By default, these are in-memory/process-local.
+Default wiring in `apps/acp-gateway/src/server.ts` creates in-process instances.
 
 Impact:
+- Restart loses registry, mailbox, heartbeat, failover assignment, and scheduler state unless a persistent store is added.
+- Multi-process or distributed scheduling semantics are not guaranteed by the current implementation.
 
-- Restart loses registry, mailbox, health, and failover assignment state unless explicit stores are added.
-- It should not be described as a distributed cluster registry yet.
+Recommended handling:
+- Keep docs and UI language clear: current semantics are local runtime coordination.
+- Add persistence only when multi-process scheduling is a real requirement.
+
+### Local trusted plugin model has sharp boundaries
+
+Implemented modules:
+- `packages/contracts/src/plugins/types.ts`
+- `packages/contracts/src/plugins/sdk.ts`
+- `apps/control-plane/src/services/plugin-discovery.ts`
+- `apps/control-plane/src/services/plugin-store.ts`
+- `apps/control-plane/src/services/plugin-marketplace.ts`
+- `apps/control-plane/src/services/plugin-security-policy.ts`
+- `apps/control-plane/src/routes/plugins.ts`
+- `apps/acp-gateway/src/plugins/plugin-manifest-adapter.ts`
+
+Impact:
+- Plugin discovery is local-directory based.
+- Security review evaluates declared permissions and admin approval for high-risk manifests.
+- There is no remote installation, dependency installation, untrusted code sandbox, signing, or runtime isolation.
+
+Recommended handling:
+- Preserve "trusted local plugin" terminology.
+- Do not add remote marketplace language without adding actual install, trust, and sandbox controls.
+
+### Template instantiation still uses default service coupling
+
+`apps/control-plane/src/routes/templates.ts` accepts injected `store` and `engine`, but the instantiate route still calls the default task creation dependency through `defaultOrchestratorService`.
+
+Impact:
+- Alternative app instances and tests with injected stores/services can diverge from runtime behavior.
+- Template routes are less dependency-injected than task, plugin, analytics, and alert routes.
 
 Recommended fix:
+- Inject task creation into `registerTemplateRoutes()`.
+- Keep route modules app-scoped and avoid importing default services for behavior that should follow the app instance.
 
-- Document process-local semantics clearly.
-- Add persistent stores only when multi-process behavior becomes an actual requirement.
+### Token usage metrics are placeholder values
+
+Contracts exist in:
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/analytics/types.ts`
+
+Implementation:
+- `apps/control-plane/src/services/analytics-service.ts` returns zero token usage from `computeTokenUsage()`.
+- `apps/control-plane/src/routes/metrics.ts` returns explicit zero token metrics.
+
+Impact:
+- Cost accounting, token charts, and token alerts are not real until runner token metadata is recorded and aggregated.
+
+Recommended fix:
+- Record token metadata at run completion when the ACP gateway or Codex runner can provide it.
+- Aggregate by task and agent in `AnalyticsService`.
 
 ## Medium Priority
 
 ### Large concentration files
 
-Notable large files:
-
+Notable large files in the current checkout:
+- `apps/web/src/app.test.tsx`: 1418 lines
 - `apps/control-plane/src/services/orchestrator-service.test.ts`: 1412 lines
-- `apps/web/src/app.test.tsx`: 1350 lines
-- `apps/control-plane/src/persistence/task-read-model.ts`: 841 lines
-- `apps/web/src/hooks/use-task-console.ts`: 490 lines
-- `apps/control-plane/src/routes/roles.ts`: 468 lines
-- `apps/control-plane/src/governance/rbac-middleware.ts`: 338 lines
-- `apps/acp-gateway/src/agent-health/heartbeat-monitor.ts`: 303 lines
-- `apps/acp-gateway/src/routes/runs.ts`: 299 lines
+- `apps/control-plane/src/persistence/task-read-model.ts`: 858 lines
+- `apps/control-plane/src/persistence/task-read-model.test.ts`: 757 lines
+- `apps/acp-gateway/src/routes/runs.test.ts`: 660 lines
+- `apps/control-plane/src/routes/tasks.test.ts`: 605 lines
+- `apps/control-plane/src/governance/rbac-policy.ts`: 536 lines
+- `apps/control-plane/src/routes/roles.ts`: 508 lines
+- `apps/web/src/hooks/use-task-console.ts`: 492 lines
+- `apps/control-plane/src/services/orchestrator-flows.ts`: 448 lines
 
 Impact:
-
-- Failures in large integration tests can be slow to localize.
-- `task-read-model.ts` mixes projection writes, query methods, replay, diffs, recovery summaries, artifacts, runs, and operator actions.
-- `use-task-console.ts` owns bootstrap, selection, retry, replay, governance, operator mutations, and URL state.
+- Failure localization is harder in large integration suites.
+- `task-read-model.ts` mixes projection writes, read queries, replay, diffs, artifacts, runs, recovery, and operator action mapping.
+- `use-task-console.ts` owns selection, data loading, retry, replay, governance, operator mutations, and URL state.
+- `orchestrator-flows.ts` is a high-blast-radius file for planning, review, execution, verification, and security scanning.
 
 Recommended refactors:
+- Split read-model write helpers from query families when adding new persistence behavior.
+- Split `use-task-console.ts` by task selection/data, governance actions, operator actions, and replay state when changing related UI flows.
+- Split very large tests by behavior cluster only when a nearby change needs it; avoid cosmetic test churn.
 
-- Split read-model query families from projection write helpers.
-- Split `use-task-console.ts` into task selection/data, governance actions, operator actions, and replay state hooks.
-- Split very large test suites by behavior cluster while preserving integration coverage.
+### No lint, format, or coverage gate
 
-### No lint, format, or typecheck gate
+Current root quality gates:
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm build`
+- `pnpm e2e`
 
-Root `package.json` has `test`, `build`, `dev`, `db:migrate`, and `e2e`, but no lint/format/typecheck script.
+Missing root gates:
+- lint
+- formatting check
+- coverage threshold
 
 Impact:
-
-- Style drift is already visible in files such as `apps/control-plane/src/routes/templates.ts` and `apps/web/src/lib/api.ts`.
-- Type-only regressions may be caught indirectly through tests/build, but not as a dedicated gate for backend packages.
+- Style drift can accumulate because no formatter/linter enforces the repository style.
+- Coverage expectations are plan-driven rather than tool-enforced.
 
 Recommended fix:
+- Add one formatter/linter deliberately if the project needs an automated style gate.
+- Do not mix multiple style tools.
 
-- Add explicit `pnpm typecheck`.
-- Add one formatter/linter only after deciding repo standards; do not mix multiple tools.
+### Mixed package manager artifact
 
-### Security scanner is implemented but not wired into execution
+`package-lock.json` is present in the working tree while `package.json` declares `pnpm@10.0.0` and the repo has `pnpm-lock.yaml`.
 
-Security modules exist:
+Impact:
+- Contributors or automation may accidentally use npm and produce divergent dependency resolution.
 
+Recommended fix:
+- Remove `package-lock.json` or document why it is intentionally retained.
+- Keep pnpm as the package manager truth.
+
+### Execution scanner coverage should stay on the live path
+
+Security modules:
 - `apps/control-plane/src/security/code-scanner.ts`
 - `apps/control-plane/src/security/sensitive-info-detector.ts`
+- `apps/control-plane/src/security/execution-scanner.ts`
 
-Tests cover scanner behavior, but current orchestration flow in `apps/control-plane/src/services/orchestrator-flows.ts` does not appear to call these scanners before accepting executor output.
-
-Impact:
-
-- Security scanning is a library capability, not a live guardrail.
-
-Recommended fix:
-
-- Define where scanning belongs: before task submission, before worker execution, after executor output, or all of the above.
-- Add route/service tests for the chosen enforcement point.
-
-### Mixed package manager artifacts
-
-The repo is a pnpm workspace, but `package-lock.json` is present in the working tree.
+Live wiring:
+- `apps/control-plane/src/services/orchestrator-flows.ts` calls `scanExecutionArtifacts()` after executor output and before verification.
 
 Impact:
+- This is now a live guardrail, so future execution refactors can accidentally bypass it.
 
-- Future contributors or CI changes could accidentally use npm instead of pnpm.
-
-Recommended fix:
-
-- Remove or intentionally justify `package-lock.json`.
-- Keep `pnpm-lock.yaml` as the package manager truth.
+Recommended handling:
+- Keep tests in `apps/control-plane/src/security/execution-scanner.test.ts` and `apps/control-plane/src/services/orchestrator-flows.test.ts` aligned with the live flow.
+- Add regression tests whenever execution artifacts or worker output shape changes.
 
 ## Lower Priority
 
-### Token metrics are placeholder
+### Gateway cancellation is immediate
 
-Contracts define token usage schemas in `packages/contracts/src/index.ts`, and `GET /metrics/tokens` exists in `apps/control-plane/src/routes/metrics.ts`, but the endpoint returns zeros.
-
-Impact:
-
-- Product docs should not claim real cost accounting yet.
-
-Recommended fix:
-
-- Record token metadata at run creation/completion if the runner can provide it.
-- Aggregate by task and agent from run projections.
-
-### Gateway run cancellation is immediate
-
-`apps/acp-gateway/src/routes/runs.ts` implements `/runs/:runId/cancel` by transitioning to `cancelling` and then immediately to `cancelled`.
+`apps/acp-gateway/src/routes/runs.ts` transitions cancellation to final state without a deeper child-process interruption protocol.
 
 Impact:
+- Most callers observe cancellation as a final state.
+- Running child-process cancellation is not a robust multi-step handshake.
 
-- There is no asynchronous cancellation handshake with a running child process.
-- UI or metrics may observe cancellation only as a final state in most cases.
-
-Recommended fix:
-
+Recommended handling:
 - Keep immediate cancellation if acceptable for MVP.
-- If real process cancellation is needed, connect cancellation to `apps/acp-gateway/src/codex/exec.ts` and worker runner lifecycle.
+- If real interruption is required, connect cancellation to `apps/acp-gateway/src/codex/exec.ts` and worker-runner lifecycle.
 
-### Duplicate or overlapping governance systems
+### Public auth remains out of scope
 
-There are simple governance policies in `apps/control-plane/src/governance/policy.ts`, plus more advanced RBAC/rule/auto-approval modules under `apps/control-plane/src/governance/` and `packages/contracts/src/governance/`.
+RBAC route and policy code exists:
+- `apps/control-plane/src/routes/roles.ts`
+- `apps/control-plane/src/governance/rbac-policy.ts`
+- `apps/control-plane/src/governance/rbac-middleware.ts`
+- `packages/contracts/src/governance/rbac.ts`
 
-Impact:
-
-- It is easy for docs to overstate which governance engine is actually on the task path.
-
-Recommended fix:
-
-- Mark each governance module as live, inactive scaffold, or roadmap.
-- Wire only the modules that are meant to affect task lifecycle.
-
-### Historical docs can still mislead readers
-
-The root README explicitly defines authority order and warns against treating historical narrative docs as current runtime fact.
+But public identity-provider integration is not wired into the current servers.
 
 Impact:
+- Local role management is implemented.
+- Auth/session/multi-tenant boundaries are not implemented.
 
-- New planning work can still overfit to `docs/superpowers/plans/*` or the historical Chinese architecture document if it ignores current code.
+Recommended handling:
+- Do not describe RBAC as production authentication.
+- Add identity/session design before exposing this beyond a trusted local deployment.
 
-Recommended fix:
+### Historical docs can mislead planning
 
-- Continue treating `apps/*`, `packages/*`, root config, and CI as authority.
-- Keep historical docs as background only.
+`README.md` defines the authority order and states that historical plans/specs are not current runtime truth.
+
+Impact:
+- `docs/superpowers/plans/*` and `三省六部Agent集群架构设计.md` can overstate distributed or institutionalized runtime behavior.
+
+Recommended handling:
+- Use `apps/*`, `packages/*`, root config, and CI as current-state authority.
+- Use historical docs only for product intent and naming context.
+
+## Resolved Since Older Maps
+
+These earlier concerns are resolved in the current checkout:
+- RBAC role routes are registered by `apps/control-plane/src/server.ts`.
+- Metrics routes are registered with `MetricsService` by `apps/control-plane/src/server.ts`.
+- Execution security scanning is wired into the live execution flow.
+- A root `pnpm typecheck` command exists.
+- Scheduler routes are registered by `apps/acp-gateway/src/server.ts`.
+- Plugin ecosystem panel and plugin routes are present.
 
 ## Verification Notes
 
-For this mapping pass, the most relevant validation is document generation and secret scanning. No source behavior was changed by the map itself.
+This map changed only `.planning/codebase/*.md`. It did not change source behavior.
 
-Before using this map for implementation planning, prefer running:
+Before implementation planning, prefer:
 
 ```bash
+pnpm typecheck
 pnpm test
 pnpm build
 ```
 
-For web or route changes, also run:
+For browser-facing or route-flow changes, also run:
 
 ```bash
 pnpm e2e
 ```
 
+---
+
+*Concerns analysis: 2026-05-04*

@@ -1,193 +1,193 @@
 # Conventions
 
-**Generated:** 2026-05-02  
-**Scope:** full repository  
-**Source priority:** code, package manifests, config files, tests, then docs
+**Analysis Date:** 2026-05-04
 
 ## Language and Module Style
 
-- TypeScript is used across app and package source.
-- ESM is the module format. Package manifests use `"type": "module"`.
-- Imports use explicit file-relative module paths for local source and package aliases for workspace packages.
-- The codebase uses 2-space indentation and double quotes.
-- `strict` TypeScript mode is enabled through `tsconfig.base.json`.
+- Use TypeScript for app and package source.
+- Use ESM modules; manifests declare `"type": "module"`.
+- Use 2-space indentation and double quotes.
+- Keep `strict` TypeScript compatibility with `tsconfig.base.json`.
+- Prefer explicit imports from workspace packages over duplicate local shapes.
+- Keep source filenames kebab-case.
+
+Representative files:
+- `apps/control-plane/src/server.ts`
+- `apps/acp-gateway/src/server.ts`
+- `apps/web/src/app.tsx`
+- `packages/contracts/src/index.ts`
+- `packages/orchestrator/src/task-machine.ts`
 
 ## File Naming
 
-Observed file conventions:
-
-- kebab-case source files: `task-machine.ts`, `task-run-gateway.ts`, `message-router.ts`
-- colocated tests: `task-machine.test.ts`, `worker-runner.test.ts`, `app.test.tsx`
-- React components in kebab-case files: `task-detail-panel.tsx`, `approval-inbox-panel.tsx`
-- domain helper modules named by responsibility: `policy.ts`, `registry.ts`, `discovery.ts`, `json-schemas.ts`
+Observed naming patterns:
+- Source files: `task-machine.ts`, `task-run-gateway.ts`, `message-router.ts`, `workflow-template-engine.ts`.
+- React component files: `task-detail-panel.tsx`, `approval-inbox-panel.tsx`, `plugin-ecosystem-panel.tsx`.
+- Tests: `task-machine.test.ts`, `worker-runner.test.ts`, `app.test.tsx`, `task-flow.spec.ts`.
+- Route files: `tasks.ts`, `roles.ts`, `plugins.ts`, `agent-scheduler.ts`.
+- Domain helper modules: `policy.ts`, `registry.ts`, `discovery.ts`, `json-schemas.ts`.
 
 ## Export Patterns
 
-Most backend modules export factories or classes rather than singletons.
+Prefer factories for app/service composition:
+- `createControlPlaneApp()` in `apps/control-plane/src/server.ts`.
+- `createGatewayApp()` in `apps/acp-gateway/src/server.ts`.
+- `createOrchestratorService()` in `apps/control-plane/src/services/orchestrator-service.ts`.
+- `createTaskRunGateway()` in `apps/control-plane/src/services/task-run-gateway.ts`.
+- `createPostgresEventStore()` in `packages/persistence/src/event-store.ts`.
+- `createMockACPClient()` in `packages/acp/src/mock-client.ts`.
+- `createHttpACPClient()` in `packages/acp/src/http-client.ts`.
+- `createWorkflowTemplateEngine()` in `apps/control-plane/src/services/workflow-template-engine.ts`.
 
-Examples:
-
-- `createControlPlaneApp()` in `apps/control-plane/src/server.ts`
-- `createGatewayApp()` in `apps/acp-gateway/src/server.ts`
-- `createOrchestratorService()` in `apps/control-plane/src/services/orchestrator-service.ts`
-- `createTaskRunGateway()` in `apps/control-plane/src/services/task-run-gateway.ts`
-- `createPostgresEventStore()` in `packages/persistence/src/event-store.ts`
-- `createMockACPClient()` in `packages/acp/src/mock-client.ts`
-- `createHttpACPClient()` in `packages/acp/src/http-client.ts`
-
-Classes are used when stateful behavior is central:
-
-- `MemoryTaskStore` in `apps/control-plane/src/store.ts`
-- `GatewayStore` in `apps/acp-gateway/src/store.ts`
-- `AgentRegistry` in `apps/acp-gateway/src/agent-registry/registry.ts`
-- `AgentDiscoveryService` in `apps/acp-gateway/src/agent-registry/discovery.ts`
-- `HeartbeatMonitor` in `apps/acp-gateway/src/agent-health/heartbeat-monitor.ts`
-- `FailoverHandler` in `apps/acp-gateway/src/agent-health/failover-handler.ts`
+Use classes when mutable state is central:
+- `MemoryTaskStore` in `apps/control-plane/src/store.ts`.
+- `GatewayStore` in `apps/acp-gateway/src/store.ts`.
+- `AgentRegistry` in `apps/acp-gateway/src/agent-registry/registry.ts`.
+- `HeartbeatMonitor` in `apps/acp-gateway/src/agent-health/heartbeat-monitor.ts`.
+- `FailoverHandler` in `apps/acp-gateway/src/agent-health/failover-handler.ts`.
+- `AgentScheduler` in `apps/acp-gateway/src/agent-scheduler/scheduler.ts`.
+- `MetricsService`, `AnalyticsService`, and `AlertService` in `apps/control-plane/src/services/`.
 
 ## Validation Style
 
-Zod is the standard validation layer.
+Use Zod as the standard validation layer.
 
-Shared domain schemas are in `packages/contracts/src/index.ts` and `packages/contracts/src/governance/*.ts`.
+Shared schemas belong in:
+- `packages/contracts/src/index.ts`
+- `packages/contracts/src/analytics/types.ts`
+- `packages/contracts/src/governance/*.ts`
+- `packages/contracts/src/plugins/types.ts`
 
-Route modules validate params, bodies, and queries locally:
+Route-local schemas are appropriate for path params, body variants, and query strings that are not shared contracts:
+- `apps/control-plane/src/routes/tasks.ts`
+- `apps/control-plane/src/routes/operator-actions.ts`
+- `apps/control-plane/src/routes/templates.ts`
+- `apps/control-plane/src/routes/plugins.ts`
+- `apps/control-plane/src/routes/roles.ts`
+- `apps/acp-gateway/src/routes/runs.ts`
+- `apps/acp-gateway/src/routes/agent-registry.ts`
+- `apps/acp-gateway/src/routes/agent-scheduler.ts`
 
-- `TaskSpecSchema` in `apps/control-plane/src/routes/tasks.ts`
-- `OperatorActionRequestSchema`-style local schemas in `apps/control-plane/src/routes/operator-actions.ts`
-- `RunCreateSchema` in `apps/acp-gateway/src/routes/runs.ts`
-- `AgentRegistrationInputSchema` and route-local schemas in `apps/acp-gateway/src/routes/agent-registry.ts`
-- `WorkflowTemplateSchema`-derived schemas in `apps/control-plane/src/routes/templates.ts`
+Use `safeParse()` when returning controlled `400` responses. Use `parse()` when validating trusted internal records or response contracts.
 
-Pattern: use `schema.parse()` for expected internal correctness and `safeParse()` when returning controlled `400` responses.
+## State and Lifecycle Rules
 
-## Error Handling
+Task lifecycle truth belongs to `packages/orchestrator/src/task-machine.ts`.
 
-Common patterns:
+Control-plane code should use `transitionTask()` for lifecycle changes rather than assigning `status` directly.
 
-- Domain errors use plain `Error` with stable message prefixes, such as `Event version mismatch for task:...` and `Event version mismatch for run:...`.
-- Route layers translate known domain errors into HTTP responses.
-- `ActionNotAllowedError` in `apps/control-plane/src/services/orchestrator-runtime.ts` maps governance conflicts to `409`.
-- `OperatorActionNotAllowedError` in `apps/control-plane/src/operator-actions/policy.ts` maps operator conflicts to `409`.
-- Template store errors are normalized by `handleStoreError()` in `apps/control-plane/src/routes/templates.ts`.
-- Postgres unique constraint races are normalized to version mismatch errors in `packages/persistence/src/event-store.ts`.
+`workflowPhase` is derived by `deriveWorkflowPhase()` in `packages/contracts/src/index.ts`. Do not persist or cache it as lifecycle truth.
+
+Task flow helpers live in `apps/control-plane/src/services/orchestrator-flows.ts`. Keep new orchestration steps there or in adjacent service modules instead of burying them in route handlers.
 
 ## Persistence Conventions
 
 Event store writes use optimistic concurrency:
-
-- callers provide `expectedVersion`
 - event streams are keyed by `stream_type`, `stream_id`, and `event_version`
-- unique constraint conflicts are normalized to stable mismatch errors
+- callers provide `expectedVersion`
+- unique constraint conflicts normalize to version mismatch errors in `packages/persistence/src/event-store.ts`
 
-Projection writers use upsert/replace helpers:
+Projection writers:
+- task projection logic is in `apps/control-plane/src/persistence/task-read-model.ts`
+- run projection logic is in `apps/acp-gateway/src/persistence/run-read-model.ts`
 
-- task projection logic lives in `apps/control-plane/src/persistence/task-read-model.ts`
-- run projection logic lives in `apps/acp-gateway/src/persistence/run-read-model.ts`
-
-In-memory stores mirror the same expected-version behavior:
-
+Memory stores should mirror expected-version behavior:
 - `MemoryTaskStore.saveTask()` in `apps/control-plane/src/store.ts`
 - `GatewayStore.saveRun()` in `apps/acp-gateway/src/store.ts`
-
-## Workflow Conventions
-
-Task lifecycle truth is centralized in `packages/orchestrator/src/task-machine.ts`.
-
-Control-plane orchestration code does not mutate status arbitrarily; it calls `transitionTask()` with task events such as:
-
-- `task.submitted`
-- `intake.completed`
-- `planning.completed`
-- `review.approved`
-- `approval.granted`
-- `dispatch.completed`
-- `execution.completed`
-- `verification.passed`
-- `operator.recovered`
-
-`workflowPhase` is derived by `deriveWorkflowPhase()` in `packages/contracts/src/index.ts`.
 
 ## Governance and Operator Separation
 
 Governance actions are:
-
 - `approve`
 - `reject`
 - `revise`
 
 Operator actions are:
-
 - `recover`
 - `takeover`
 - `abandon`
 
-The separation is reflected in:
+Keep these surfaces separated across contracts, services, and routes:
+- `TaskActionSchema` and `OperatorActionTypeSchema` in `packages/contracts/src/index.ts`.
+- governance route logic in `apps/control-plane/src/routes/tasks.ts`.
+- operator route logic in `apps/control-plane/src/routes/operator-actions.ts`.
+- coordination in `apps/control-plane/src/services/governance-coordinator.ts` and `apps/control-plane/src/services/operator-coordinator.ts`.
 
-- `TaskActionSchema` and `OperatorActionTypeSchema` in `packages/contracts/src/index.ts`
-- `apps/control-plane/src/routes/tasks.ts`
-- `apps/control-plane/src/routes/operator-actions.ts`
-- `apps/control-plane/src/services/governance-coordinator.ts`
-- `apps/control-plane/src/services/operator-coordinator.ts`
+## Plugin Conventions
+
+Plugins are local trusted manifests:
+- put shared schema changes in `packages/contracts/src/plugins/types.ts`
+- expose SDK helpers in `packages/contracts/src/plugins/sdk.ts`
+- discover local directories through `apps/control-plane/src/services/plugin-discovery.ts`
+- manage lifecycle through `apps/control-plane/src/services/plugin-store.ts`
+- evaluate compatibility/security through `apps/control-plane/src/services/plugin-marketplace.ts` and `apps/control-plane/src/services/plugin-security-policy.ts`
+- adapt enabled ACP worker extensions in `apps/acp-gateway/src/plugins/plugin-manifest-adapter.ts`
+
+Do not model current plugins as remote packages, runtime dependency installers, or untrusted sandboxed code.
+
+## Security Conventions
+
+Security scanning modules live in `apps/control-plane/src/security/`.
+
+Execution artifact scanning is wired into `apps/control-plane/src/services/orchestrator-flows.ts` through `scanExecutionArtifacts()`. New executor output paths should preserve this enforcement point.
+
+Sensitive data rules:
+- never read `.env` contents for documentation or mapping work
+- do not include secrets in generated docs
+- keep plugin permission review explicit through `PluginSecurityPolicy`
 
 ## Frontend Conventions
 
-The web app uses functional React components and a central hook for console state.
+Use functional React components.
 
-Component files accept props and avoid direct API calls:
-
+Panels should receive data and callbacks via props:
 - `apps/web/src/components/task-detail-panel.tsx`
 - `apps/web/src/components/approval-inbox-panel.tsx`
 - `apps/web/src/components/operator-queue-panel.tsx`
-- `apps/web/src/components/timeline-panel.tsx`
+- `apps/web/src/components/analytics-dashboard.tsx`
+- `apps/web/src/components/plugin-ecosystem-panel.tsx`
 
-Data and mutations are separated into:
+Keep browser effects and mutations outside leaf components:
+- API calls in `apps/web/src/lib/api.ts`
+- bootstrap/load composition in `apps/web/src/lib/console-data.ts`
+- mutation orchestration in `apps/web/src/lib/console-actions.ts`
+- task console state in `apps/web/src/hooks/use-task-console.ts`
+- analytics state in `apps/web/src/hooks/use-analytics.ts`
 
-- `apps/web/src/lib/api.ts`
-- `apps/web/src/lib/console-data.ts`
-- `apps/web/src/lib/console-actions.ts`
+When adding a new backend endpoint, add a typed wrapper in `apps/web/src/lib/api.ts` and cover it in `apps/web/src/lib/api.test.ts`.
 
-`apps/web/src/hooks/use-task-console.ts` owns most current UI state. This is consistent with the present app shape but is a hotspot for future splitting.
+## Error Handling
 
-## Test Conventions
+Common patterns:
+- Route layers translate known domain errors into HTTP responses.
+- `ActionNotAllowedError` in `apps/control-plane/src/services/orchestrator-runtime.ts` maps governance conflicts to `409`.
+- `OperatorActionNotAllowedError` in `apps/control-plane/src/operator-actions/policy.ts` maps operator conflicts to `409`.
+- Template route errors are normalized by `handleStoreError()` in `apps/control-plane/src/routes/templates.ts`.
+- Plugin route errors are normalized by `handlePluginError()` in `apps/control-plane/src/routes/plugins.ts`.
+- Postgres unique constraint races become stable optimistic-version errors in `packages/persistence/src/event-store.ts`.
 
-Vitest tests use `describe`, `it`, `expect`, and `vi`.
+Prefer stable domain error messages when tests or API clients depend on them.
 
-Backend route tests usually instantiate Fastify apps directly, as seen in:
+## Comments and Documentation
 
-- `apps/control-plane/src/routes/tasks.test.ts`
-- `apps/control-plane/src/routes/operator-actions.test.ts`
-- `apps/acp-gateway/src/routes/runs.test.ts`
+Most implementation code is self-documenting through names. Comments are appropriate for:
+- event/projection ordering
+- scanner rationale
+- workflow template expansion
+- non-obvious concurrency or recovery behavior
 
-Persistence tests use `pg-mem` where SQL behavior matters:
+Avoid broad narrative comments in source when the module and function names already explain the behavior.
 
-- `packages/persistence/src/event-store.test.ts`
-- `apps/control-plane/src/persistence/task-read-model.test.ts`
-- `apps/acp-gateway/src/persistence/run-read-model.test.ts`
+## Formatting and Quality Gates
 
-Frontend unit tests use Testing Library and mocked `fetch` in:
+Use root checks:
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm build`
+- `pnpm e2e` for browser flows
 
-- `apps/web/src/app.test.tsx`
-- `apps/web/src/lib/api.test.ts`
+There is no configured ESLint, Prettier, or Biome. Match nearby formatting until a formatter is intentionally introduced.
 
-Browser E2E uses Playwright in:
+---
 
-- `apps/web/e2e/task-flow.spec.ts`
-- `apps/web/e2e/operator-console.spec.ts`
-
-## Comments and Documentation in Code
-
-Most code is self-documenting through names. Comments appear mainly for:
-
-- complex event/projection ordering
-- route numbering in templates
-- security scanner rationale
-- workflow template algorithm explanations
-
-Avoid adding broad narrative comments when local names already describe behavior.
-
-## Current Formatting Gaps
-
-There is no configured ESLint, Prettier, Biome, or root typecheck command. Some files show style drift in spacing or long lines, for example `apps/control-plane/src/routes/templates.ts` and `apps/web/src/lib/api.ts`.
-
-For future changes, match nearby code first and keep formatting minimal unless a formatter is introduced intentionally.
-
+*Convention analysis: 2026-05-04*
