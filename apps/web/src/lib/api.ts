@@ -1,9 +1,20 @@
 import type { ACPAgentManifest } from "@feudal/acp";
 import type {
+  AlertEvent,
+  AlertState,
+  AuditTrailQuery,
+  AuditTrailResponse,
+  MetricSnapshot,
   OperatorActionRecord,
   OperatorActionSummary,
-  TaskRecord
+  PluginDiagnostic,
+  PluginMarketplaceEntry,
+  RecoverySummary,
+  TaskRecord,
+  TaskProjection
 } from "@feudal/contracts";
+
+export type { RecoverySummary };
 
 export interface CreateTaskInput {
   title: string;
@@ -13,13 +24,7 @@ export interface CreateTaskInput {
   sensitivity: "low" | "medium" | "high";
 }
 
-export type TaskConsoleRecord = TaskRecord & {
-  recoveryState?: string;
-  recoveryReason?: string;
-  lastRecoveredAt?: string;
-  latestEventId?: number;
-  latestProjectionVersion?: number;
-};
+export type TaskConsoleRecord = TaskProjection;
 
 export interface TaskEventSummary {
   id: number;
@@ -31,11 +36,6 @@ export interface TaskDiffEntry {
   id: number;
   changedPaths: string[];
   afterSubsetJson: Record<string, unknown>;
-}
-
-export interface RecoverySummary {
-  tasksNeedingRecovery: number;
-  runsNeedingRecovery: number;
 }
 
 interface TaskDiffApiRecord {
@@ -52,7 +52,20 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
 
   if (!response.ok) {
-    throw new Error(`Request failed for ${path}`);
+    const message = await response
+      .clone()
+      .json()
+      .then((payload) =>
+        payload && typeof payload === "object" && "message" in payload
+          ? String((payload as { message: unknown }).message)
+          : undefined
+      )
+      .catch(async () => {
+        const text = await response.text().catch(() => "");
+        return text.trim().length > 0 ? text : undefined;
+      });
+
+    throw new Error(message ?? `Request failed for ${path}`);
   }
 
   return response.json() as Promise<T>;
@@ -174,4 +187,86 @@ export async function fetchOperatorSummary() {
 
 export async function fetchRecoverySummary() {
   return requestJson<RecoverySummary>("/api/recovery/summary");
+}
+
+export async function fetchAnalyticsSnapshot() {
+  return requestJson<MetricSnapshot | { status: string; message: string }>(
+    "/api/analytics/snapshot"
+  );
+}
+
+export function subscribeAnalytics(
+  onSnapshot: (snapshot: MetricSnapshot) => void,
+  onError?: () => void
+) {
+  if (typeof EventSource === "undefined") {
+    onError?.();
+
+    return {
+      eventSource: undefined,
+      close: () => undefined
+    };
+  }
+
+  const source = new EventSource("/api/analytics/stream");
+
+  source.onmessage = (event) => {
+    try {
+      const parsed = JSON.parse(event.data);
+
+      if (parsed.type === "snapshot" && parsed.payload) {
+        onSnapshot(parsed.payload as MetricSnapshot);
+      }
+    } catch {
+      // Ignore heartbeat comments and malformed frames.
+    }
+  };
+  source.onerror = () => {
+    onError?.();
+  };
+
+  return {
+    eventSource: source,
+    close: () => source.close()
+  };
+}
+
+export async function fetchAuditTrail(query: AuditTrailQuery) {
+  const params = new URLSearchParams();
+
+  if (query.taskId) params.set("taskId", query.taskId);
+  if (query.agentId) params.set("agentId", query.agentId);
+  if (query.eventType) params.set("eventType", query.eventType);
+  if (query.timeRange) {
+    params.set("timeRange[start]", query.timeRange.start);
+    params.set("timeRange[end]", query.timeRange.end);
+  }
+  if (query.searchQuery) params.set("searchQuery", query.searchQuery);
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.cursor) params.set("cursor", String(query.cursor));
+
+  return requestJson<AuditTrailResponse>(
+    `/api/analytics/audit-trail?${params.toString()}`
+  );
+}
+
+export async function fetchAlertStates() {
+  return requestJson<{ states: AlertState[] }>("/api/alerts/state");
+}
+
+export async function fetchPendingAlerts() {
+  return requestJson<{ alerts: AlertEvent[] }>("/api/alerts/pending");
+}
+
+export interface PluginMarketplaceSnapshot {
+  entries: PluginMarketplaceEntry[];
+  failed: Array<{
+    pluginId?: string;
+    manifestPath?: string;
+    diagnostic: PluginDiagnostic;
+  }>;
+}
+
+export async function fetchPluginMarketplace() {
+  return requestJson<PluginMarketplaceSnapshot>("/api/plugins/marketplace");
 }

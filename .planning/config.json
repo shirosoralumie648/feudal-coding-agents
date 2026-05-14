@@ -1,0 +1,33 @@
+{
+  "project": "Feudal Coding Agents",
+  "code": "FCA",
+  "mode": "yolo",
+  "granularity": "standard",
+  "parallelization": true,
+  "commit_docs": true,
+  "model_profile": "balanced",
+  "workflow": {
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "nyquist_validation": true,
+    "auto_advance": false
+  },
+  "branching": {
+    "strategy": "m-phases",
+    "phase_branch_prefix": "phase-",
+    "main_branch": "main"
+  },
+  "agents": {
+    "enabled": true,
+    "types": [
+      "researcher",
+      "planner",
+      "executor",
+      "verifier"
+    ]
+  },
+  "brownfield": true,
+  "codebase_map": ".planning/codebase",
+  "initialized": "2026-04-27"
+}

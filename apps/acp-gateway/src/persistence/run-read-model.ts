@@ -29,7 +29,8 @@ function toRunRecord(payload: unknown): GatewayRunRecord {
     messages: run.messages ?? [],
     artifacts: run.artifacts ?? [],
     awaitPrompt: run.awaitPrompt,
-    allowedActions: run.allowedActions
+    allowedActions: run.allowedActions,
+    cancellationReason: run.cancellationReason
   };
 }
 
@@ -50,6 +51,8 @@ function toProjectionRecord(row: {
     latestProjectionVersion: Number(row.latest_projection_version)
   } satisfies GatewayRunProjectionRecord;
 }
+
+type RunProjectionRow = Parameters<typeof toProjectionRecord>[0];
 
 async function upsertRunProjection(options: {
   queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
@@ -137,7 +140,7 @@ export function createRunReadModel(options: {
 
     async getRun(runId: string) {
       const result = await options.eventStore.withTransaction(async (tx) =>
-        tx.query(
+        tx.query<RunProjectionRow>(
           `select recovery_state, recovery_reason, last_recovered_at,
                   latest_event_id, latest_projection_version, payload_json
              from runs_current

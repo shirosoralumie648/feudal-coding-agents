@@ -20,6 +20,30 @@ function createReplayApp() {
 }
 
 describe("replay routes", () => {
+  it("returns not found for missing task event, run, and artifact reads", async () => {
+    const app = createReplayApp();
+
+    const events = await app.inject({
+      method: "GET",
+      url: "/api/tasks/missing-task/events"
+    });
+    const runs = await app.inject({
+      method: "GET",
+      url: "/api/tasks/missing-task/runs"
+    });
+    const artifacts = await app.inject({
+      method: "GET",
+      url: "/api/tasks/missing-task/artifacts"
+    });
+
+    expect(events.statusCode).toBe(404);
+    expect(events.json()).toEqual({ message: "Task not found" });
+    expect(runs.statusCode).toBe(404);
+    expect(runs.json()).toEqual({ message: "Task not found" });
+    expect(artifacts.statusCode).toBe(404);
+    expect(artifacts.json()).toEqual({ message: "Task not found" });
+  });
+
   it("returns events, diffs, replay snapshots, and recovery summary", async () => {
     const app = createReplayApp();
     const created = await app.inject({
@@ -58,6 +82,13 @@ describe("replay routes", () => {
     expect(artifacts.json().length).toBeGreaterThan(0);
     expect(replay.json().task.id).toBe(taskId);
     expect(recovery.json().tasksNeedingRecovery).toBeGreaterThanOrEqual(0);
+    expect(recovery.json()).toEqual(
+      expect.objectContaining({
+        taskBreakdown: expect.any(Object),
+        runRecoveryBreakdown: expect.any(Object),
+        runStatusBreakdown: expect.any(Object)
+      })
+    );
   });
 
   it("returns task runs and artifacts from dedicated projections", async () => {

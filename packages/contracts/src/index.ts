@@ -18,6 +18,19 @@ export const TaskStatusSchema = z.enum([
   "rolled_back"
 ]);
 
+export const WorkflowPhaseSchema = z.enum([
+  "intake",
+  "planning",
+  "review",
+  "approval",
+  "execution",
+  "verification",
+  "revision",
+  "recovery",
+  "completed",
+  "terminal"
+]);
+
 export const TaskActionSchema = z.enum(["approve", "reject", "revise"]);
 export const OperatorActionTypeSchema = z.enum(["recover", "takeover", "abandon"]);
 export const OperatorActionStatusSchema = z.enum([
@@ -73,6 +86,7 @@ export const TaskArtifactSchema = z.object({
   kind: z.enum([
     "taskspec",
     "decision-brief",
+    "fact-check",
     "review",
     "assignment",
     "execution-report"
@@ -161,7 +175,8 @@ export const ACPRunSummarySchema = z.object({
   status: ACPRunSummaryStatusSchema,
   phase: ACPRunSummaryPhaseSchema,
   awaitPrompt: z.string().optional(),
-  allowedActions: z.array(z.string()).optional()
+  allowedActions: z.array(z.string()).optional(),
+  cancellationReason: z.string().optional()
 });
 
 export const TaskApprovalRequestSchema = z.object({
@@ -186,6 +201,7 @@ export const TaskRecordSchema = z.object({
   title: z.string(),
   prompt: z.string(),
   status: TaskStatusSchema,
+  workflowPhase: WorkflowPhaseSchema.optional(),
   artifacts: z.array(TaskArtifactSchema),
   history: z.array(TaskHistoryEntrySchema),
   runIds: z.array(z.string()),
@@ -199,7 +215,111 @@ export const TaskRecordSchema = z.object({
   updatedAt: z.string()
 });
 
+export const TaskProjectionSchema = TaskRecordSchema.extend({
+  recoveryState: RecoveryStateSchema,
+  recoveryReason: z.string().optional(),
+  lastRecoveredAt: z.string().optional(),
+  latestEventId: z.number().int().nonnegative(),
+  latestProjectionVersion: z.number().int().nonnegative()
+});
+
+const RunProjectionMessageSchema = z.object({
+  role: z.union([z.literal("user"), z.string().regex(/^agent\/.+/)]),
+  content: z.string()
+});
+
+const RunProjectionArtifactSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  mimeType: z.string(),
+  content: z.unknown()
+});
+
+export const RunProjectionSchema = z.object({
+  id: z.string(),
+  taskId: z.string().optional(),
+  agent: z.string(),
+  status: ACPRunSummaryStatusSchema,
+  phase: ACPRunSummaryPhaseSchema.optional(),
+  messages: z.array(RunProjectionMessageSchema),
+  artifacts: z.array(RunProjectionArtifactSchema),
+  awaitPrompt: z.string().optional(),
+  allowedActions: z.array(z.string()).optional(),
+  cancellationReason: z.string().optional(),
+  recoveryState: RecoveryStateSchema,
+  recoveryReason: z.string().optional(),
+  lastRecoveredAt: z.string().optional(),
+  latestEventId: z.number().int().nonnegative(),
+  latestProjectionVersion: z.number().int().nonnegative()
+});
+
+const RecoveryBreakdownSchema = z.object({
+  healthy: z.number().int().nonnegative(),
+  replaying: z.number().int().nonnegative(),
+  recoveryRequired: z.number().int().nonnegative()
+});
+
+const RunStatusBreakdownSchema = z.object({
+  created: z.number().int().nonnegative(),
+  inProgress: z.number().int().nonnegative(),
+  awaiting: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  cancelling: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative()
+});
+
+export const RecoverySummarySchema = z.object({
+  tasksNeedingRecovery: z.number().int().nonnegative(),
+  runsNeedingRecovery: z.number().int().nonnegative(),
+  taskBreakdown: RecoveryBreakdownSchema,
+  runRecoveryBreakdown: RecoveryBreakdownSchema,
+  runStatusBreakdown: RunStatusBreakdownSchema
+});
+
+// Token usage tracking
+export const TokenUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative()
+});
+
+export const RunTokenUsageSchema = z.object({
+  runId: z.string(),
+  agent: z.string(),
+  phase: ACPRunSummaryPhaseSchema,
+  tokenUsage: TokenUsageSchema,
+  recordedAt: z.string()
+});
+
+export const TaskTokenUsageSummarySchema = z.object({
+  taskId: z.string(),
+  totalInputTokens: z.number().int().nonnegative(),
+  totalOutputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  runs: z.array(RunTokenUsageSchema)
+});
+
+export const SystemTokenUsageSummarySchema = z.object({
+  totalInputTokens: z.number().int().nonnegative(),
+  totalOutputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  byAgent: z.array(z.object({
+    agent: z.string(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative(),
+    runCount: z.number().int().nonnegative()
+  }))
+});
+
+// Governance types (RBAC)
+export * from "./governance/index";
+export * from "./analytics";
+export * from "./plugins";
+
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+export type WorkflowPhase = z.infer<typeof WorkflowPhaseSchema>;
 export type TaskAction = z.infer<typeof TaskActionSchema>;
 export type OperatorActionType = z.infer<typeof OperatorActionTypeSchema>;
 export type OperatorActionStatus = z.infer<typeof OperatorActionStatusSchema>;
@@ -219,3 +339,47 @@ export type TaskApprovalRequest = z.infer<typeof TaskApprovalRequestSchema>;
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
 export type RecoveryState = z.infer<typeof RecoveryStateSchema>;
 export type TaskRecord = z.infer<typeof TaskRecordSchema>;
+export type TaskProjection = z.infer<typeof TaskProjectionSchema>;
+export type RunProjection = z.infer<typeof RunProjectionSchema>;
+export type RecoverySummary = z.infer<typeof RecoverySummarySchema>;
+export type TokenUsage = z.infer<typeof TokenUsageSchema>;
+export type RunTokenUsage = z.infer<typeof RunTokenUsageSchema>;
+export type TaskTokenUsageSummary = z.infer<typeof TaskTokenUsageSummarySchema>;
+export type SystemTokenUsageSummary = z.infer<typeof SystemTokenUsageSummarySchema>;
+
+export function deriveWorkflowPhase(task: {
+  status: TaskStatus;
+  recoveryState?: RecoveryState;
+}): WorkflowPhase {
+  if (task.recoveryState && task.recoveryState !== "healthy") {
+    return "recovery";
+  }
+
+  switch (task.status) {
+    case "draft":
+    case "intake":
+      return "intake";
+    case "planning":
+      return "planning";
+    case "review":
+      return "review";
+    case "awaiting_approval":
+      return "approval";
+    case "dispatching":
+    case "executing":
+      return "execution";
+    case "verifying":
+      return "verification";
+    case "needs_revision":
+      return "revision";
+    case "failed":
+      return "recovery";
+    case "completed":
+      return "completed";
+    case "abandoned":
+    case "rejected":
+    case "partial_success":
+    case "rolled_back":
+      return "terminal";
+  }
+}

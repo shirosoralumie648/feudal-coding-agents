@@ -5,7 +5,7 @@ import type {
 } from "../store";
 
 const GATEWAY_METADATA = { actorType: "acp-gateway" } as const;
-const TRACKED_DIFF_FIELDS = ["status", "awaitPrompt", "allowedActions"] as const;
+const TRACKED_DIFF_FIELDS = ["status", "phase", "awaitPrompt", "allowedActions", "cancellationReason"] as const;
 
 type DiffField = (typeof TRACKED_DIFF_FIELDS)[number];
 
@@ -21,7 +21,12 @@ function isEqualValue(left: unknown, right: unknown) {
 }
 
 function toRecoveryState(status: GatewayRunRecord["status"]): GatewayRecoveryState {
-  if (status === "awaiting" || status === "completed" || status === "failed") {
+  if (
+    status === "awaiting" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled"
+  ) {
     return "healthy";
   }
 
@@ -47,7 +52,8 @@ function toRunSnapshot(run: GatewayRunRecord) {
     messages: run.messages,
     artifacts: run.artifacts,
     ...(run.awaitPrompt !== undefined ? { awaitPrompt: run.awaitPrompt } : {}),
-    ...(run.allowedActions !== undefined ? { allowedActions: run.allowedActions } : {})
+    ...(run.allowedActions !== undefined ? { allowedActions: run.allowedActions } : {}),
+    ...(run.cancellationReason !== undefined ? { cancellationReason: run.cancellationReason } : {})
   } satisfies Record<string, unknown>;
 }
 

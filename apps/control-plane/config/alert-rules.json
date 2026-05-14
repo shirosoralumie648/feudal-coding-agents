@@ -1,0 +1,58 @@
+[
+  {
+    "id": "alert-task-backlog",
+    "name": "Task Backlog Alert",
+    "description": "Triggers when total task count exceeds threshold, indicating pipeline congestion",
+    "enabled": true,
+    "metricField": "totalTaskCount",
+    "operator": "gte",
+    "threshold": 20,
+    "suppressionWindowMs": 300000,
+    "notificationChannels": ["in-app"]
+  },
+  {
+    "id": "alert-agent-recovery",
+    "name": "Agent Recovery Alert",
+    "description": "Triggers when tasks enter recovery_required state, indicating agent failures",
+    "enabled": true,
+    "metricField": "recoveryRequired",
+    "operator": "gte",
+    "threshold": 3,
+    "suppressionWindowMs": 300000,
+    "notificationChannels": ["in-app", "webhook"]
+  },
+  {
+    "id": "alert-approval-backlog",
+    "name": "Approval Backlog Alert",
+    "description": "Triggers when too many tasks are awaiting approval",
+    "enabled": true,
+    "metricField": "awaitingApproval",
+    "operator": "gte",
+    "threshold": 10,
+    "suppressionWindowMs": 300000,
+    "notificationChannels": ["in-app"]
+  },
+  {
+    "id": "alert-error-rate",
+    "name": "High Error Rate Alert",
+    "description": "Triggers when error rate exceeds threshold",
+    "enabled": true,
+    "metricField": "errorRate",
+    "operator": "gte",
+    "threshold": 0.3,
+    "suppressionWindowMs": 300000,
+    "notificationChannels": ["in-app", "webhook"]
+  },
+  {
+    "id": "alert-approval-latency",
+    "name": "Approval Latency Alert",
+    "description": "Triggers when average approval latency exceeds threshold in milliseconds",
+    "enabled": false,
+    "metricField": "avgApprovalLatencyMs",
+    "operator": "gte",
+    "threshold": 3600000,
+    "suppressionWindowMs": 300000,
+    "notificationChannels": ["in-app", "webhook"]
+  }
+]
+

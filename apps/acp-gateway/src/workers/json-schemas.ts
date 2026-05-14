@@ -49,6 +49,31 @@ export const reviewResultSchema = z
   })
   .strict();
 
+export const factCheckSchema = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    findings: {
+      type: "array",
+      items: { type: "string" }
+    },
+    policyReasons: {
+      type: "array",
+      items: { type: "string" }
+    }
+  },
+  required: ["summary", "findings", "policyReasons"],
+  additionalProperties: false
+} as const;
+
+export const factCheckResultSchema = z
+  .object({
+    summary: z.string(),
+    findings: z.array(z.string()),
+    policyReasons: z.array(z.string())
+  })
+  .strict();
+
 export const executionReportSchema = {
   type: "object",
   properties: {

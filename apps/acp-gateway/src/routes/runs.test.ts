@@ -35,6 +35,7 @@ describe("acp-gateway runs routes", () => {
 
     expect(created.statusCode).toBe(201);
     expect(created.json().status).toBe("awaiting");
+    expect(created.json().phase).toBe("approval");
     expect(created.json().recoveryState).toBe("healthy");
     expect(created.json().recoveryReason).toBeUndefined();
     expect(created.json().id).toEqual(expect.any(String));
@@ -96,6 +97,7 @@ describe("acp-gateway runs routes", () => {
         id: "run-agent-1",
         agent: payload.agent,
         status: "completed",
+        phase: "planning",
         messages: payload.messages,
         artifacts: []
       })
@@ -114,15 +116,63 @@ describe("acp-gateway runs routes", () => {
     expect(response.statusCode).toBe(201);
     expect(response.json()).toEqual(
       expect.objectContaining({
-        id: "run-agent-1",
+        id: expect.any(String),
         agent: "analyst-agent",
         status: "completed",
+        phase: "planning",
         messages: [{ role: "user", content: "plan this task" }],
         artifacts: [],
         recoveryState: "healthy"
       })
     );
     expect(response.json().recoveryReason).toBeUndefined();
+  });
+
+  it("persists created, in-progress, and completed states for successful agent runs", async () => {
+    const saveLog: Array<{ status: string; eventType: string }> = [];
+    const store = {
+      async getRun() {
+        return undefined;
+      },
+      async saveRun(run, eventType, expectedVersion) {
+        saveLog.push({ status: run.status, eventType });
+        return {
+          ...run,
+          recoveryState: run.status === "completed" ? "healthy" : "recovery_required",
+          latestEventId: expectedVersion + 1,
+          latestProjectionVersion: expectedVersion + 1
+        };
+      }
+    } satisfies GatewayRunStore;
+    const app = Fastify();
+    registerRunRoutes(app, {
+      store,
+      runAgent: async (payload) => ({
+        id: "ignored-by-route",
+        agent: payload.agent,
+        status: "completed",
+        phase: "planning",
+        messages: payload.messages,
+        artifacts: []
+      })
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "plan this task" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(saveLog).toEqual([
+      { status: "created", eventType: "run.created" },
+      { status: "in-progress", eventType: "run.in-progress" },
+      { status: "completed", eventType: "run.completed" }
+    ]);
   });
 
   it("persists a failed run when the worker runner throws", async () => {
@@ -153,6 +203,48 @@ describe("acp-gateway runs routes", () => {
       })
     );
     expect(response.json().recoveryReason).toBeUndefined();
+  });
+
+  it("persists created, in-progress, and failed states when the worker runner throws", async () => {
+    const saveLog: Array<{ status: string; eventType: string }> = [];
+    const store = {
+      async getRun() {
+        return undefined;
+      },
+      async saveRun(run, eventType, expectedVersion) {
+        saveLog.push({ status: run.status, eventType });
+        return {
+          ...run,
+          recoveryState: run.status === "failed" ? "healthy" : "recovery_required",
+          latestEventId: expectedVersion + 1,
+          latestProjectionVersion: expectedVersion + 1
+        };
+      }
+    } satisfies GatewayRunStore;
+    const app = Fastify();
+    registerRunRoutes(app, {
+      store,
+      runAgent: async () => {
+        throw new Error("runner exploded");
+      }
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/runs",
+      payload: {
+        kind: "agent-run",
+        agent: "analyst-agent",
+        messages: [{ role: "user", content: "plan this task" }]
+      }
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(saveLog).toEqual([
+      { status: "created", eventType: "run.created" },
+      { status: "in-progress", eventType: "run.in-progress" },
+      { status: "failed", eventType: "run.failed" }
+    ]);
   });
 
   it("returns 500 when persistence fails after a successful agent run", async () => {
@@ -403,5 +495,166 @@ describe("acp-gateway runs routes", () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json().taskId).toBe("task-1");
+  });
+
+  // MB.2: Run cancellation tests
+  describe("run cancellation", () => {
+    it("cancels an awaiting run with a reason", async () => {
+      const app = Fastify();
+      registerRunRoutes(app);
+
+      const created = await app.inject({
+        method: "POST",
+        url: "/runs",
+        payload: {
+          kind: "await",
+          label: "approval-needed",
+          prompt: "Proceed?",
+          actions: ["approve", "reject"]
+        }
+      });
+
+      expect(created.statusCode).toBe(201);
+      const runId = created.json().id;
+
+      const cancelled = await app.inject({
+        method: "POST",
+        url: `/runs/${runId}/cancel`,
+        payload: {
+          reason: "User requested cancellation"
+        }
+      });
+
+      expect(cancelled.statusCode).toBe(200);
+      expect(cancelled.json().status).toBe("cancelled");
+      expect(cancelled.json().cancellationReason).toBe("User requested cancellation");
+      expect(cancelled.json().recoveryState).toBe("healthy");
+    });
+
+    it("returns 404 when cancelling a missing run", async () => {
+      const app = Fastify();
+      registerRunRoutes(app);
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/runs/missing-run/cancel",
+        payload: {
+          reason: "Not needed"
+        }
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ message: "Run not found" });
+    });
+
+    it("returns 409 when cancelling a completed run", async () => {
+      const app = Fastify();
+      registerRunRoutes(app);
+
+      const created = await app.inject({
+        method: "POST",
+        url: "/runs",
+        payload: {
+          kind: "await",
+          label: "approval-needed",
+          prompt: "Proceed?",
+          actions: ["approve", "reject"]
+        }
+      });
+
+      const runId = created.json().id;
+
+      // First complete the run
+      await app.inject({
+        method: "POST",
+        url: `/runs/${runId}`,
+        payload: {
+          role: "user",
+          content: "approve"
+        }
+      });
+
+      // Then try to cancel
+      const response = await app.inject({
+        method: "POST",
+        url: `/runs/${runId}/cancel`,
+        payload: {
+          reason: "Too late"
+        }
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(response.json().message).toContain("Cannot cancel run in completed state");
+    });
+
+    it("returns 400 when reason is missing", async () => {
+      const app = Fastify();
+      registerRunRoutes(app);
+
+      const created = await app.inject({
+        method: "POST",
+        url: "/runs",
+        payload: {
+          kind: "await",
+          label: "approval-needed",
+          prompt: "Proceed?",
+          actions: ["approve", "reject"]
+        }
+      });
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/runs/${created.json().id}/cancel`,
+        payload: {}
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().message).toBe("Invalid cancel request payload");
+    });
+
+    it("persists cancelling and cancelled states", async () => {
+      const saveLog: Array<{ status: string; eventType: string; cancellationReason?: string }> = [];
+      const store = {
+        async getRun() {
+          return {
+            id: "run-cancel-test",
+            agent: "approval-needed",
+            status: "awaiting",
+            messages: [],
+            artifacts: [],
+            awaitPrompt: "Proceed?",
+            allowedActions: ["approve", "reject"],
+            recoveryState: "healthy" as const,
+            latestEventId: 1,
+            latestProjectionVersion: 1
+          };
+        },
+        async saveRun(run: { status: string; cancellationReason?: string }, eventType: string) {
+          saveLog.push({ status: run.status, eventType, cancellationReason: run.cancellationReason });
+          return {
+            ...run,
+            recoveryState: "healthy" as const,
+            latestEventId: saveLog.length + 1,
+            latestProjectionVersion: saveLog.length + 1
+          };
+        }
+      } satisfies GatewayRunStore;
+      const app = Fastify();
+      registerRunRoutes(app, { store });
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/runs/run-cancel-test/cancel",
+        payload: {
+          reason: "User requested"
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(saveLog).toEqual([
+        { status: "cancelling", eventType: "run.cancellation_requested", cancellationReason: "User requested" },
+        { status: "cancelled", eventType: "run.cancelled", cancellationReason: "User requested" }
+      ]);
+    });
   });
 });

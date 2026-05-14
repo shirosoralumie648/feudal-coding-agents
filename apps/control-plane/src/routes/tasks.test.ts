@@ -77,6 +77,7 @@ describe("control-plane routes", () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json().recoveryState).toBe("healthy");
+    expect(response.json().workflowPhase).toBe("approval");
     expect(response.json().latestEventId).toBeGreaterThan(0);
     expect(response.json().latestProjectionVersion).toBeGreaterThan(0);
   });
@@ -244,6 +245,7 @@ describe("control-plane routes", () => {
 
     expect(approval.statusCode).toBe(200);
     expect(approval.json().status).toBe("completed");
+    expect(approval.json().workflowPhase).toBe("completed");
     expect(approval.json().approvalRunId).toBeUndefined();
     expect(approval.json().approvalRequest).toBeUndefined();
     expect(approval.json().runs.map((run: { phase: string }) => run.phase)).toEqual([

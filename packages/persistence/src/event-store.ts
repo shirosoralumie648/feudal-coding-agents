@@ -13,6 +13,20 @@ export interface AppendRequest {
   }[];
 }
 
+export interface AppendedEventRecord {
+  id: number;
+  streamType: string;
+  streamId: string;
+  eventType: string;
+  eventVersion: number;
+}
+
+export interface LoadedEventRecord extends AppendedEventRecord {
+  occurredAt: unknown;
+  payloadJson: unknown;
+  metadataJson: unknown;
+}
+
 function toEventVersionMismatchError(streamType: string, streamId: string) {
   return new Error(`Event version mismatch for ${streamType}:${streamId}`);
 }
@@ -50,9 +64,11 @@ export function createPostgresEventStore(options: { pool: SqlPool }) {
       }
     },
 
-    async append(input: AppendRequest, executor?: PoolClient) {
+    async append(input: AppendRequest, executor?: PoolClient): Promise<AppendedEventRecord[]> {
       if (!executor) {
-        return this.withTransaction((client) => this.append(input, client));
+        return this.withTransaction((client): Promise<AppendedEventRecord[]> =>
+          this.append(input, client)
+        );
       }
 
       const versionResult = await executor.query(
@@ -68,11 +84,11 @@ export function createPostgresEventStore(options: { pool: SqlPool }) {
         throw toEventVersionMismatchError(input.streamType, input.streamId);
       }
 
-      const appended = [];
+      const appended: AppendedEventRecord[] = [];
 
       try {
         for (const [offset, event] of input.events.entries()) {
-          const inserted = await executor.query(
+          const inserted = await executor.query<AppendedEventRecord>(
             `insert into event_log (
                stream_type, stream_id, event_type, event_version,
                actor_id, actor_type, reason, correlation_id, causation_id,
@@ -108,8 +124,8 @@ export function createPostgresEventStore(options: { pool: SqlPool }) {
       return appended;
     },
 
-    async loadStream(streamType: string, streamId: string) {
-      const result = await pool.query(
+    async loadStream(streamType: string, streamId: string): Promise<LoadedEventRecord[]> {
+      const result = await pool.query<LoadedEventRecord>(
         `select id, stream_type as "streamType", stream_id as "streamId",
                 event_type as "eventType", event_version as "eventVersion",
                 occurred_at as "occurredAt", payload_json as "payloadJson",
@@ -123,8 +139,8 @@ export function createPostgresEventStore(options: { pool: SqlPool }) {
       return result.rows;
     },
 
-    async loadAfter(eventId: number) {
-      const result = await pool.query(
+    async loadAfter(eventId: number): Promise<LoadedEventRecord[]> {
+      const result = await pool.query<LoadedEventRecord>(
         `select id, stream_type as "streamType", stream_id as "streamId",
                 event_type as "eventType", event_version as "eventVersion",
                 occurred_at as "occurredAt", payload_json as "payloadJson",

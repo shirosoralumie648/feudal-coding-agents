@@ -111,9 +111,13 @@ export function registerTaskRoutes(
   });
 
   app.post("/api/tasks", async (request, reply) => {
+    const body =
+      request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
     const payload = TaskSpecSchema.parse({
       id: crypto.randomUUID(),
-      ...request.body
+      ...body
     });
 
     const projection = await service.createTask(payload);

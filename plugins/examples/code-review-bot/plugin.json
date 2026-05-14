@@ -1,0 +1,43 @@
+{
+  "id": "local.code-review-bot",
+  "name": "Code Review Bot",
+  "version": "1.0.0",
+  "description": "Example local ACP worker plugin for code review findings.",
+  "capabilities": ["code-review", "review-findings"],
+  "extensionPoints": [
+    {
+      "type": "acp-worker",
+      "id": "local.code-review-bot.worker",
+      "workerName": "code-review-bot",
+      "displayName": "Code Review Bot",
+      "capabilities": ["code-review"],
+      "artifactName": "code-review.json",
+      "outputSchema": {},
+      "required": false,
+      "enabledByDefault": false
+    }
+  ],
+  "entry": {
+    "module": "src/index.ts"
+  },
+  "enabledByDefault": false,
+  "compatibility": {
+    "app": "feudal-coding-agents",
+    "minVersion": "1.0.0"
+  },
+  "security": {
+    "permissions": [
+      {
+        "type": "filesystem",
+        "access": "read",
+        "target": "repository",
+        "justification": "Read source files before producing review findings",
+        "required": true
+      }
+    ]
+  },
+  "metadata": {
+    "example": true,
+    "category": "review"
+  }
+}

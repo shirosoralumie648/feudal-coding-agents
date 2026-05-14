@@ -72,6 +72,65 @@ const defaultTask: TaskRecord = {
   updatedAt: "2026-04-02T14:00:00.000Z"
 };
 
+const defaultPluginMarketplace = {
+  entries: [
+    {
+      pluginId: "local.agent-plugin",
+      name: "Local Agent Plugin",
+      version: "1.0.0",
+      state: "enabled",
+      sourceKind: "inline",
+      extensionTypes: ["acp-worker"],
+      compatibility: {
+        status: "compatible",
+        app: "feudal-coding-agents",
+        currentVersion: "1.0.0",
+        reason: "Manifest targets this app"
+      },
+      security: {
+        pluginId: "local.agent-plugin",
+        riskLevel: "low",
+        approvalRequired: false,
+        permissions: [],
+        findings: [],
+        recommendations: [],
+        reviewedAt: "2026-05-04T00:00:00.000Z"
+      }
+    },
+    {
+      pluginId: "local.audit-plugin",
+      name: "Audit Plugin",
+      version: "1.1.0",
+      state: "available",
+      sourceKind: "local-directory",
+      extensionTypes: ["workflow-step-provider"],
+      compatibility: {
+        status: "compatible",
+        app: "feudal-coding-agents",
+        currentVersion: "1.0.0",
+        reason: "Manifest targets this app"
+      },
+      security: {
+        pluginId: "local.audit-plugin",
+        riskLevel: "high",
+        approvalRequired: true,
+        permissions: [
+          {
+            type: "process",
+            access: "execute",
+            target: "codex",
+            justification: "Run local audit"
+          }
+        ],
+        findings: [],
+        recommendations: ["Admin approval required before enabling"],
+        reviewedAt: "2026-05-04T00:00:00.000Z"
+      }
+    }
+  ],
+  failed: []
+};
+
 function json(data: unknown, status = 200) {
   return Promise.resolve(
     new Response(JSON.stringify(data), {
@@ -119,6 +178,7 @@ function mockConsoleApi(options?: {
   }>;
   replay?: { task: Pick<TaskRecord, "id" | "title" | "status"> };
   tasksResponse?: Promise<Response>;
+  pluginMarketplace?: typeof defaultPluginMarketplace;
 }) {
   const agents = options?.agents ?? defaultAgents;
   let tasks = options?.initialTasks ?? [defaultTask];
@@ -150,11 +210,34 @@ function mockConsoleApi(options?: {
       return json(agents);
     }
 
+    if (url.endsWith("/api/plugins/marketplace") && method === "GET") {
+      return json(options?.pluginMarketplace ?? defaultPluginMarketplace);
+    }
+
     if (url.endsWith("/api/recovery/summary") && method === "GET") {
       return json(
         options?.recoverySummary ?? {
           tasksNeedingRecovery: 0,
-          runsNeedingRecovery: 0
+          runsNeedingRecovery: 0,
+          taskBreakdown: {
+            healthy: 0,
+            replaying: 0,
+            recoveryRequired: 0
+          },
+          runRecoveryBreakdown: {
+            healthy: 0,
+            replaying: 0,
+            recoveryRequired: 0
+          },
+          runStatusBreakdown: {
+            created: 0,
+            inProgress: 0,
+            awaiting: 0,
+            completed: 0,
+            failed: 0,
+            cancelling: 0,
+            cancelled: 0
+          }
         }
       );
     }
@@ -369,12 +452,16 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Task Detail" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Governance Inbox" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Agent Registry" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Plugin Ecosystem" })).toBeVisible();
 
     expect(
       await screen.findByRole("heading", { level: 3, name: "Build dashboard" })
     ).toBeVisible();
     expect(screen.getByText("gongbu-executor")).toBeVisible();
     expect(screen.getByText("Review and execute the dashboard task.")).toBeVisible();
+    expect(screen.getByText("Local Agent Plugin")).toBeVisible();
+    expect(screen.getByText("Audit Plugin")).toBeVisible();
+    expect(screen.getByText("high")).toBeVisible();
   });
 
   it("shows ACP run details and approval prompt from the selected task", async () => {
@@ -387,6 +474,43 @@ describe("App", () => {
     expect(
       screen.getByRole("button", { name: "Approve Build dashboard" })
     ).toBeVisible();
+  });
+
+  it("renders runtime identity separately from narrative alias in the agent registry", async () => {
+    mockConsoleApi({
+      agents: [
+        {
+          name: "fact-checker-agent",
+          role: "采风司",
+          description: "Checks supporting references before review.",
+          capabilities: ["fact-check"],
+          displayName: "Fact Checker",
+          narrativeAlias: "采风司",
+          capabilityGroup: "analysis",
+          enabledByDefault: false
+        }
+      ]
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("fact-checker-agent")).toBeVisible();
+    expect(screen.getByText("Fact Checker")).toBeVisible();
+    expect(screen.getByText("Alias: 采风司")).toBeVisible();
+  });
+
+  it("shows the derived workflow phase and next phase context for the selected task", async () => {
+    mockConsoleApi();
+
+    render(<App />);
+
+    const phaseRow = (await screen.findByText("Workflow Phase")).closest(
+      ".task-summary-meta"
+    );
+
+    expect(phaseRow).not.toBeNull();
+    expect(within(phaseRow as HTMLElement).getByText("Approval")).toBeVisible();
+    expect(within(phaseRow as HTMLElement).getByText("Next: Execution")).toBeVisible();
   });
 
   it("approves a task from the inbox and refreshes the detail panel", async () => {
@@ -404,6 +528,69 @@ describe("App", () => {
       "/api/tasks/task-1/governance-actions/approve",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("renders governance action failures inline in the governance inbox", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = init?.method ?? "GET";
+
+      if (url.endsWith("/api/tasks") && method === "GET") {
+        return json([defaultTask]);
+      }
+
+      if (url.endsWith("/api/agents") && method === "GET") {
+        return json(defaultAgents);
+      }
+
+      if (url.endsWith("/api/recovery/summary") && method === "GET") {
+        return json({ tasksNeedingRecovery: 0, runsNeedingRecovery: 0 });
+      }
+
+      if (url.endsWith("/api/operator-actions/summary") && method === "GET") {
+        return json({ tasksNeedingOperatorAttention: 0, tasks: [] });
+      }
+
+      if (url.endsWith(`/api/tasks/${defaultTask.id}/operator-actions`) && method === "GET") {
+        return json([]);
+      }
+
+      if (url.endsWith(`/api/tasks/${defaultTask.id}/events`) && method === "GET") {
+        return json([]);
+      }
+
+      if (url.endsWith(`/api/tasks/${defaultTask.id}/diffs`) && method === "GET") {
+        return json([]);
+      }
+
+      if (url.endsWith(`/api/tasks/${defaultTask.id}/governance-actions/approve`) && method === "POST") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ message: "Task task-1 does not allow approve" }),
+            {
+              status: 409,
+              headers: { "content-type": "application/json" }
+            }
+          )
+        );
+      }
+
+      throw new Error(`Unexpected fetch for ${method} ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve Build dashboard" }));
+
+    const inboxPanel = screen.getByRole("heading", { name: "Governance Inbox" }).closest("section");
+    expect(inboxPanel).not.toBeNull();
+    expect(
+      await within(inboxPanel as HTMLElement).findByText("Task task-1 does not allow approve")
+    ).toBeVisible();
+    expect(screen.queryByText("Task task-1 does not allow approve")).toBeVisible();
+    expect(screen.queryByText("Request failed for /api/tasks/task-1/governance-actions/approve")).not.toBeInTheDocument();
   });
 
   it("rejects a task from the inbox and refreshes the detail panel", async () => {
@@ -742,6 +929,10 @@ describe("App", () => {
 
     render(<App />);
 
+    await waitFor(() => {
+      expect(screen.getByText("1 waiting")).toBeVisible();
+    });
+
     const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
     const inboxSection = inboxPanel.closest("section");
     expect(inboxSection).not.toBeNull();
@@ -780,6 +971,10 @@ describe("App", () => {
 
     render(<App />);
 
+    await waitFor(() => {
+      expect(screen.getByText("1 waiting")).toBeVisible();
+    });
+
     const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
     const inboxSection = inboxPanel.closest("section");
     expect(inboxSection).not.toBeNull();
@@ -817,6 +1012,10 @@ describe("App", () => {
     });
 
     render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("1 waiting")).toBeVisible();
+    });
 
     const inboxPanel = await screen.findByRole("heading", { name: "Governance Inbox" });
     const inboxSection = inboxPanel.closest("section");
@@ -1012,6 +1211,43 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Operator Console" })).toBeVisible();
     expect(screen.getByText("takeover / applied")).toBeVisible();
     expect(screen.queryByLabelText("Operator note")).not.toBeInTheDocument();
+  });
+
+  it("renders operator action failures inline in the operator console", async () => {
+    mockConsoleApi({
+      initialTasks: [
+        {
+          ...defaultTask,
+          operatorAllowedActions: ["takeover"]
+        }
+      ],
+      takenOverResponse: Promise.resolve(
+        new Response(
+          JSON.stringify({
+            message: "Task task-1 does not allow operator action takeover"
+          }),
+          {
+            status: 409,
+            headers: { "content-type": "application/json" }
+          }
+        )
+      )
+    });
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("Operator note"), {
+      target: { value: "Re-plan this task." }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Take over task" }));
+
+    const operatorPanel = screen.getByRole("heading", { name: "Operator Console" }).closest("article");
+    expect(operatorPanel).not.toBeNull();
+    expect(
+      await within(operatorPanel as HTMLElement).findByText(
+        "Task task-1 does not allow operator action takeover"
+      )
+    ).toBeVisible();
   });
 
   it("retries initial operator history loads after a transient failure", async () => {

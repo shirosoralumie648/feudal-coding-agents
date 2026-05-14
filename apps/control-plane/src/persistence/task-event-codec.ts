@@ -2,6 +2,7 @@ import {
   AuditEventSchema,
   TaskRecordSchema,
   type RecoveryState,
+  deriveWorkflowPhase,
   type AuditEvent,
   type TaskRecord
 } from "@feudal/contracts";
@@ -31,7 +32,13 @@ function isEqualValue(left: unknown, right: unknown) {
 }
 
 function toTaskSnapshot(task: TaskRecord) {
-  return TaskRecordSchema.parse(task);
+  return TaskRecordSchema.parse({
+    ...task,
+    workflowPhase: deriveWorkflowPhase({
+      status: task.status,
+      recoveryState: (task as TaskRecord & { recoveryState?: RecoveryState }).recoveryState
+    })
+  });
 }
 
 function toDiffPayload(task: TaskRecord, previousTask?: TaskRecord) {
@@ -156,6 +163,12 @@ export function toTaskProjectionRecord(input: {
 }): TaskProjectionRecord {
   return {
     ...input.task,
+    workflowPhase: deriveWorkflowPhase({
+      status: input.task.status,
+      recoveryState:
+        input.recoveryState ??
+        (input.task as TaskRecord & { recoveryState?: RecoveryState }).recoveryState
+    }),
     recoveryState: input.recoveryState ?? "healthy",
     recoveryReason: input.recoveryReason,
     lastRecoveredAt: input.lastRecoveredAt ?? input.task.updatedAt,
@@ -173,5 +186,12 @@ export function taskFromAuditEvent(event: AuditEvent) {
     return undefined;
   }
 
-  return TaskRecordSchema.parse(event.payloadJson);
+  const task = TaskRecordSchema.parse(event.payloadJson);
+
+  return TaskRecordSchema.parse({
+    ...task,
+    workflowPhase: deriveWorkflowPhase({
+      status: task.status
+    })
+  });
 }

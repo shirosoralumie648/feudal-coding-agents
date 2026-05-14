@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHttpACPClient } from "@feudal/acp/http-client";
 import { createMockACPClient } from "@feudal/acp/mock-client";
 import {
@@ -7,8 +9,15 @@ import {
 } from "@feudal/persistence";
 import { createTaskReadModel } from "./persistence/task-read-model";
 import { createOrchestratorService } from "./services/orchestrator-service";
+import { PluginDiscovery } from "./services/plugin-discovery";
+import { PluginExtensionCatalog } from "./services/plugin-extension-catalog";
+import { MemoryPluginStore } from "./services/plugin-store";
 import { createTaskRunGateway } from "./services/task-run-gateway";
 import { MemoryTaskStore, type TaskStore } from "./store";
+import { MemoryTemplateStore, type TemplateStore } from "./services/workflow-template-store";
+import { createWorkflowTemplateEngine, type WorkflowTemplateEngine } from "./services/workflow-template-engine";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 export function createACPClientFromEnv() {
   const baseUrl = process.env.ACP_BASE_URL ?? "http://127.0.0.1:4100";
@@ -71,8 +80,8 @@ export function createLazyTaskStore(
       return (await getStore()).getTask(taskId);
     },
 
-    async saveTask(task, eventType, expectedVersion, options) {
-      return (await getStore()).saveTask(task, eventType, expectedVersion, options);
+    async saveTask(task, eventType, expectedVersion) {
+      return (await getStore()).saveTask(task, eventType, expectedVersion);
     },
 
     async recordOperatorAction(input) {
@@ -89,6 +98,10 @@ export function createLazyTaskStore(
 
     async listTaskEvents(taskId) {
       return (await getStore()).listTaskEvents(taskId);
+    },
+
+    async listAuditEventsAfter(cursor) {
+      return (await getStore()).listAuditEventsAfter(cursor);
     },
 
     async listTaskDiffs(taskId) {
@@ -121,3 +134,22 @@ export const defaultOrchestratorService = createOrchestratorService({
   runGateway: createTaskRunGatewayFromEnv(),
   store: createLazyTaskStore()
 });
+
+export const defaultTemplateStore: TemplateStore = new MemoryTemplateStore();
+export const defaultTemplateEngine = createWorkflowTemplateEngine();
+
+export function getPluginRootsFromEnv(): string[] {
+  return (process.env.FEUDAL_PLUGIN_DIRS ?? "plugins,plugins/examples")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => (path.isAbsolute(value) ? value : path.join(repoRoot, value)));
+}
+
+export const defaultPluginStore = new MemoryPluginStore();
+export const defaultPluginDiscovery = new PluginDiscovery({
+  roots: getPluginRootsFromEnv()
+});
+export const defaultPluginExtensionCatalog = new PluginExtensionCatalog(
+  defaultPluginStore
+);

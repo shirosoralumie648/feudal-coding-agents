@@ -2,6 +2,7 @@ import type { FormEvent } from "react";
 import type { TaskRecord } from "@feudal/contracts";
 
 interface RevisionPanelProps {
+  error?: string;
   isSubmitting: boolean;
   note: string;
   onNoteChange: (nextValue: string) => void;
@@ -10,7 +11,7 @@ interface RevisionPanelProps {
 }
 
 export function RevisionPanel(props: RevisionPanelProps) {
-  const { isSubmitting, note, onNoteChange, onSubmit, task } = props;
+  const { error, isSubmitting, note, onNoteChange, onSubmit, task } = props;
 
   if (!task.governance?.allowedActions.includes("revise")) {
     return null;
@@ -28,6 +29,7 @@ export function RevisionPanel(props: RevisionPanelProps) {
         ))}
       </ul>
       <form onSubmit={onSubmit}>
+        {error ? <p className="field-note">{error}</p> : null}
         <label>
           Revision note
           <textarea

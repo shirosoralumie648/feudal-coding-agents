@@ -1,8 +1,10 @@
 import {
   OperatorActionRecordSchema,
   OperatorActionSummarySchema,
+  RecoverySummarySchema,
   RecoveryStateSchema,
   TaskRecordSchema,
+  type TaskProjection,
   type ACPRunSummary,
   type AuditEvent,
   type OperatorActionRecord,
@@ -22,13 +24,7 @@ import {
   toTaskProjectionRecord
 } from "./task-event-codec";
 
-export interface TaskProjectionRecord extends TaskRecord {
-  recoveryState: RecoveryState;
-  recoveryReason?: string;
-  lastRecoveredAt?: string;
-  latestEventId: number;
-  latestProjectionVersion: number;
-}
+export interface TaskProjectionRecord extends TaskProjection {}
 
 function toIsoString(value: unknown) {
   if (typeof value === "string") {
@@ -53,15 +49,17 @@ function toProjectionRecord(row: {
   const recoveryState = RecoveryStateSchema.parse(row.recovery_state);
   const task = syncOperatorActions(TaskRecordSchema.parse(row.payload_json), recoveryState);
 
-  return {
-    ...task,
+  return toTaskProjectionRecord({
+    task,
     recoveryState,
     recoveryReason: row.recovery_reason ?? undefined,
     lastRecoveredAt: row.last_recovered_at ? toIsoString(row.last_recovered_at) : undefined,
     latestEventId: Number(row.latest_event_id),
     latestProjectionVersion: Number(row.latest_projection_version)
-  } satisfies TaskProjectionRecord;
+  }) satisfies TaskProjectionRecord;
 }
+
+type TaskCurrentRow = Parameters<typeof toProjectionRecord>[0];
 
 type ProjectionQueryable = {
   query: (
@@ -167,32 +165,6 @@ async function replaceTaskArtifacts(options: {
       ]
     );
   }
-}
-
-async function appendOperatorAction(options: {
-  queryable: { query: (sql: string, values: unknown[]) => Promise<unknown> };
-  task: TaskRecord;
-  eventType: string;
-}) {
-  const actionType =
-    options.eventType === "task.approved"
-      ? "approve"
-      : options.eventType === "task.rejected"
-        ? "reject"
-        : options.eventType === "task.revision_submitted"
-          ? "revise"
-        : undefined;
-
-  if (!actionType) {
-    return;
-  }
-
-  await options.queryable.query(
-    `insert into operator_actions (
-       task_id, action_type, status, actor_id, actor_type, reason, payload_json, created_at
-     ) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [options.task.id, actionType, "applied", null, "user", null, {}, options.task.updatedAt]
-  );
 }
 
 function toOperatorActionRecord(row: {
@@ -350,6 +322,15 @@ async function loadTaskRuns(queryable: ProjectionQueryable, taskId: string) {
   });
 }
 
+async function taskExists(queryable: ProjectionQueryable, taskId: string) {
+  const result = await queryable.query(
+    `select id from tasks_current where id = $1`,
+    [taskId]
+  );
+
+  return Boolean(result.rows[0]);
+}
+
 async function hydrateTaskProjection(
   queryable: ProjectionQueryable,
   task: TaskProjectionRecord
@@ -467,7 +448,7 @@ export function createTaskReadModel(options: {
   return {
     async listTasks() {
       const result = await options.eventStore.withTransaction(async (tx) =>
-        tx.query(
+        tx.query<TaskCurrentRow>(
           `select recovery_state, recovery_reason, last_recovered_at,
                   latest_event_id, latest_projection_version, payload_json
              from tasks_current
@@ -480,7 +461,7 @@ export function createTaskReadModel(options: {
 
     async getTask(taskId: string) {
       return options.eventStore.withTransaction(async (tx) => {
-        const result = await tx.query(
+        const result = await tx.query<TaskCurrentRow>(
           `select recovery_state, recovery_reason, last_recovered_at,
                   latest_event_id, latest_projection_version, payload_json
              from tasks_current
@@ -537,11 +518,6 @@ export function createTaskReadModel(options: {
           task: projectedTask,
           latestEventId: latestEvent?.id ?? 0,
           latestProjectionVersion: latestEvent?.eventVersion ?? expectedVersion
-        });
-        await appendOperatorAction({
-          queryable: tx,
-          task: projectedTask,
-          eventType
         });
         await options.eventStore.writeCheckpoint("tasks_current", latestEvent?.id ?? 0, tx);
 
@@ -622,10 +598,20 @@ export function createTaskReadModel(options: {
       });
     },
 
-    async listTaskEvents(taskId: string) {
-      const task = await this.getTask(taskId);
+    async listAuditEventsAfter(cursor = 0) {
+      const events = await options.eventStore.loadAfter(cursor);
+      return events
+        .map((event) => toAuditEvent(event))
+        .filter((event) => event.streamType === "task")
+        .sort((left, right) => left.id - right.id);
+    },
 
-      if (!task) {
+    async listTaskEvents(taskId: string) {
+      const exists = await options.eventStore.withTransaction((tx) =>
+        taskExists(tx as ProjectionQueryable, taskId)
+      );
+
+      if (!exists) {
         return undefined;
       }
 
@@ -640,9 +626,7 @@ export function createTaskReadModel(options: {
 
     async listTaskRuns(taskId: string) {
       return options.eventStore.withTransaction(async (tx) => {
-        const result = await tx.query(`select id from tasks_current where id = $1`, [taskId]);
-
-        if (!result.rows[0]) {
+        if (!(await taskExists(tx as ProjectionQueryable, taskId))) {
           return undefined;
         }
 
@@ -652,9 +636,7 @@ export function createTaskReadModel(options: {
 
     async listTaskArtifacts(taskId: string) {
       return options.eventStore.withTransaction(async (tx) => {
-        const result = await tx.query(`select id from tasks_current where id = $1`, [taskId]);
-
-        if (!result.rows[0]) {
+        if (!(await taskExists(tx as ProjectionQueryable, taskId))) {
           return undefined;
         }
 
@@ -700,7 +682,7 @@ export function createTaskReadModel(options: {
     },
 
     async getRecoverySummary() {
-      const [tasksResult, runsResult] = await Promise.all([
+      const [tasksResult, taskBreakdownResult, runsResult, runBreakdownResult] = await Promise.all([
         options.eventStore.withTransaction(async (tx) =>
           tx.query(
             `select count(*) as count
@@ -710,17 +692,94 @@ export function createTaskReadModel(options: {
         ),
         options.eventStore.withTransaction(async (tx) =>
           tx.query(
+            `select recovery_state, count(*) as count
+               from tasks_current
+              group by recovery_state`
+          )
+        ),
+        options.eventStore.withTransaction(async (tx) =>
+          tx.query(
             `select count(*) as count
                from runs_current
               where recovery_state <> 'healthy'`
           )
+        ),
+        options.eventStore.withTransaction(async (tx) =>
+          tx.query(
+            `select recovery_state, status, count(*) as count
+               from runs_current
+              group by recovery_state, status`
+          )
         )
       ]);
 
-      return {
-        tasksNeedingRecovery: Number(tasksResult.rows[0]?.count ?? 0),
-        runsNeedingRecovery: Number(runsResult.rows[0]?.count ?? 0)
+      const taskBreakdown = {
+        healthy: 0,
+        replaying: 0,
+        recoveryRequired: 0
       };
+      const runRecoveryBreakdown = {
+        healthy: 0,
+        replaying: 0,
+        recoveryRequired: 0
+      };
+      const runStatusBreakdown = {
+        created: 0,
+        inProgress: 0,
+        awaiting: 0,
+        completed: 0,
+        failed: 0,
+        cancelling: 0,
+        cancelled: 0
+      };
+
+      for (const row of taskBreakdownResult.rows) {
+        const count = Number(row.count ?? 0);
+
+        if (row.recovery_state === "recovery_required") {
+          taskBreakdown.recoveryRequired += count;
+        } else if (row.recovery_state === "replaying") {
+          taskBreakdown.replaying += count;
+        } else {
+          taskBreakdown.healthy += count;
+        }
+      }
+
+      for (const row of runBreakdownResult.rows) {
+        const count = Number(row.count ?? 0);
+
+        if (row.recovery_state === "recovery_required") {
+          runRecoveryBreakdown.recoveryRequired += count;
+        } else if (row.recovery_state === "replaying") {
+          runRecoveryBreakdown.replaying += count;
+        } else {
+          runRecoveryBreakdown.healthy += count;
+        }
+
+        if (row.status === "created") {
+          runStatusBreakdown.created += count;
+        } else if (row.status === "in-progress") {
+          runStatusBreakdown.inProgress += count;
+        } else if (row.status === "awaiting") {
+          runStatusBreakdown.awaiting += count;
+        } else if (row.status === "completed") {
+          runStatusBreakdown.completed += count;
+        } else if (row.status === "failed") {
+          runStatusBreakdown.failed += count;
+        } else if (row.status === "cancelling") {
+          runStatusBreakdown.cancelling += count;
+        } else if (row.status === "cancelled") {
+          runStatusBreakdown.cancelled += count;
+        }
+      }
+
+      return RecoverySummarySchema.parse({
+        tasksNeedingRecovery: Number(tasksResult.rows[0]?.count ?? 0),
+        runsNeedingRecovery: Number(runsResult.rows[0]?.count ?? 0),
+        taskBreakdown,
+        runRecoveryBreakdown,
+        runStatusBreakdown
+      });
     },
 
     async rebuildProjectionsIfNeeded() {

@@ -6,7 +6,20 @@ import {
   createPostgresPool,
   runMigrations
 } from "@feudal/persistence";
+import { AgentDiscoveryService } from "./agent-registry/discovery";
+import { AgentRegistry } from "./agent-registry/registry";
+import { acpManifestToRegistryManifest } from "./agent-registry/seed";
+import { BottleneckAnalyzer } from "./agent-scheduler/bottleneck-analyzer";
+import { AgentScheduler } from "./agent-scheduler/scheduler";
+import { HeartbeatMonitor } from "./agent-health/heartbeat-monitor";
+import { FailoverHandler } from "./agent-health/failover-handler";
+import { AgentMessageRouter } from "./agent-protocol/message-router";
+import { manifests } from "./manifests";
 import { registerAgentRoutes } from "./routes/agents";
+import { registerAgentHealthRoutes } from "./routes/agent-health";
+import { registerAgentMessagingRoutes } from "./routes/agent-messaging";
+import { registerAgentRegistryRoutes } from "./routes/agent-registry";
+import { registerAgentSchedulerRoutes } from "./routes/agent-scheduler";
 import { registerRunRoutes } from "./routes/runs";
 import { createRunReadModel } from "./persistence/run-read-model";
 import { GatewayStore, type GatewayRunStore } from "./store";
@@ -68,8 +81,45 @@ export function createGatewayApp(options?: {
     options?.codexRunner ??
     createCodexExecRunner({ repoRoot: options?.repoRoot ?? repoRoot });
   const workerRunner = createWorkerRunner({ codexRunner });
+  const registry = new AgentRegistry();
+  const discovery = new AgentDiscoveryService(registry);
+  const messageRouter = new AgentMessageRouter({ registry });
+  const heartbeatMonitor = new HeartbeatMonitor({
+    registry,
+    router: messageRouter,
+    config: {
+      intervalMs: 30000,
+      timeoutMs: 30000,
+      maxMissedHeartbeats: 3
+    }
+  });
+  const failoverHandler = new FailoverHandler({
+    monitor: heartbeatMonitor,
+    registry,
+    discovery
+  });
+  const scheduler = new AgentScheduler({
+    registry,
+    discovery,
+    monitor: heartbeatMonitor
+  });
+  const bottleneckAnalyzer = new BottleneckAnalyzer({
+    registry,
+    monitor: heartbeatMonitor,
+    scheduler
+  });
 
   registerAgentRoutes(app);
+  registerAgentRegistryRoutes(app, { registry, discovery });
+  registerAgentMessagingRoutes(app, { router: messageRouter });
+  registerAgentHealthRoutes(app, {
+    monitor: heartbeatMonitor,
+    failoverHandler
+  });
+  registerAgentSchedulerRoutes(app, {
+    scheduler,
+    analyzer: bottleneckAnalyzer
+  });
   registerRunRoutes(app, {
     store,
     runAgent: (payload) =>
@@ -80,8 +130,18 @@ export function createGatewayApp(options?: {
   });
 
   app.addHook("onReady", async () => {
+    if (registry.listAgents().length === 0) {
+      for (const manifest of manifests) {
+        await registry.register(acpManifestToRegistryManifest(manifest));
+      }
+    }
+    heartbeatMonitor.startMonitoring();
     await store.rebuildProjectionsIfNeeded();
     await options?.onReady?.();
+  });
+
+  app.addHook("onClose", async () => {
+    heartbeatMonitor.stopMonitoring();
   });
 
   return app;
