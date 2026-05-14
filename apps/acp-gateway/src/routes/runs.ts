@@ -43,16 +43,46 @@ const AwaitResponseSchema = z.object({
 });
 
 type AgentRunPayload = Extract<z.infer<typeof RunCreateSchema>, { kind: "agent-run" }>;
+type TypedAgentRunPayload = Omit<AgentRunPayload, "messages"> & {
+  messages: ACPMessage[];
+};
+
+function toACPMessages(messages: AgentRunPayload["messages"]): ACPMessage[] {
+  return messages.map((message) => ({
+    role: message.role as ACPMessage["role"],
+    content: message.content
+  }));
+}
 
 function isRunVersionMismatch(error: unknown) {
   return error instanceof Error && error.message.startsWith("Event version mismatch for run:");
+}
+
+function phaseForRunAgent(agent: GatewayWorkerName) {
+  if (agent === "intake-agent") {
+    return "intake" as const;
+  }
+
+  if (agent === "analyst-agent" || agent === "fact-checker-agent") {
+    return "planning" as const;
+  }
+
+  if (agent === "auditor-agent" || agent === "critic-agent") {
+    return "review" as const;
+  }
+
+  if (agent === "gongbu-executor") {
+    return "execution" as const;
+  }
+
+  return "verification" as const;
 }
 
 export function registerRunRoutes(
   app: FastifyInstance,
   options?: {
     store?: GatewayRunStore;
-    runAgent?: (payload: AgentRunPayload) => Promise<GatewayRunRecord>;
+    runAgent?: (payload: TypedAgentRunPayload) => Promise<GatewayRunRecord>;
   }
 ) {
   const store = options?.store ?? new GatewayStore();
@@ -76,6 +106,7 @@ export function registerRunRoutes(
           taskId: payload.metadata?.taskId,
           agent: payload.label,
           status: "awaiting",
+          phase: "approval",
           messages: [],
           artifacts: [],
           awaitPrompt: payload.prompt,
@@ -92,22 +123,50 @@ export function registerRunRoutes(
       return reply.code(400).send({ message: "Unsupported run kind: agent-run" });
     }
 
+    const runId = randomUUID();
+    const messages = toACPMessages(payload.messages);
+    const initialRun = await store.saveRun(
+      {
+        id: runId,
+        taskId: payload.metadata?.taskId,
+        agent: payload.agent,
+        status: "created",
+        phase: phaseForRunAgent(payload.agent),
+        messages,
+        artifacts: []
+      },
+      "run.created",
+      0
+    );
+    const inProgressRun = await store.saveRun(
+      {
+        ...initialRun,
+        status: "in-progress",
+        messages,
+        artifacts: []
+      },
+      "run.in-progress",
+      initialRun.latestProjectionVersion
+    );
+
     let run: GatewayRunRecord;
 
     try {
-      run = await options.runAgent(payload);
+      run = await options.runAgent({ ...payload, messages });
     } catch {
       const failedRun = await store.saveRun(
         {
-          id: randomUUID(),
+          ...inProgressRun,
+          id: runId,
           taskId: payload.metadata?.taskId,
           agent: payload.agent,
           status: "failed",
-          messages: payload.messages,
+          phase: phaseForRunAgent(payload.agent),
+          messages,
           artifacts: []
         },
         "run.failed",
-        0
+        inProgressRun.latestProjectionVersion
       );
 
       return reply.code(201).send(failedRun);
@@ -115,11 +174,14 @@ export function registerRunRoutes(
 
     const persisted = await store.saveRun(
       {
+        ...inProgressRun,
         ...run,
-        taskId: run.taskId ?? payload.metadata?.taskId
+        id: runId,
+        taskId: payload.metadata?.taskId ?? run.taskId,
+        phase: run.phase ?? phaseForRunAgent(payload.agent)
       },
       `run.${run.status}`,
-      0
+      inProgressRun.latestProjectionVersion
     );
     return reply.code(201).send(persisted);
   });
@@ -171,6 +233,70 @@ export function registerRunRoutes(
       );
 
       return resumed;
+    } catch (error) {
+      if (isRunVersionMismatch(error)) {
+        return reply.code(409).send({
+          message: "Run state changed, retry the request"
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  // MB.2: Run cancellation endpoint
+  const CancelRequestSchema = z.object({
+    reason: z.string().min(1)
+  });
+
+  app.post("/runs/:runId/cancel", async (request, reply) => {
+    const params = z.object({ runId: z.string() }).parse(request.params);
+    const cancelResult = CancelRequestSchema.safeParse(request.body);
+    const run = await store.getRun(params.runId);
+
+    if (!cancelResult.success) {
+      return reply.code(400).send({
+        message: "Invalid cancel request payload",
+        issues: cancelResult.error.issues
+      });
+    }
+
+    const { reason } = cancelResult.data;
+
+    if (!run) {
+      return reply.code(404).send({ message: "Run not found" });
+    }
+
+    // Only allow cancellation from created, in-progress, or awaiting states
+    if (!["created", "in-progress", "awaiting"].includes(run.status)) {
+      return reply.code(409).send({
+        message: `Cannot cancel run in ${run.status} state`
+      });
+    }
+
+    try {
+      // First transition to cancelling state
+      const cancellingRun = await store.saveRun(
+        {
+          ...run,
+          status: "cancelling",
+          cancellationReason: reason
+        },
+        "run.cancellation_requested",
+        run.latestProjectionVersion
+      );
+
+      // Then immediately transition to cancelled state
+      const cancelledRun = await store.saveRun(
+        {
+          ...cancellingRun,
+          status: "cancelled"
+        },
+        "run.cancelled",
+        cancellingRun.latestProjectionVersion
+      );
+
+      return cancelledRun;
     } catch (error) {
       if (isRunVersionMismatch(error)) {
         return reply.code(409).send({

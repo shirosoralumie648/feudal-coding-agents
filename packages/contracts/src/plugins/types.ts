@@ -52,6 +52,46 @@ export const PluginExtensionPointSchema = z.discriminatedUnion("type", [
   WorkflowStepProviderExtensionSchema
 ]);
 
+export const PLUGIN_PERMISSION_TYPES = [
+  "filesystem",
+  "network",
+  "secrets",
+  "process",
+  "workflow"
+] as const;
+
+export const PluginPermissionTypeSchema = z.enum(PLUGIN_PERMISSION_TYPES);
+
+export const PLUGIN_PERMISSION_ACCESSES = [
+  "read",
+  "write",
+  "execute",
+  "connect",
+  "admin"
+] as const;
+
+export const PluginPermissionAccessSchema = z.enum(
+  PLUGIN_PERMISSION_ACCESSES
+);
+
+export const PluginPermissionSchema = z
+  .object({
+    type: PluginPermissionTypeSchema,
+    access: PluginPermissionAccessSchema,
+    target: z.string().min(1),
+    justification: z.string().min(1),
+    required: z.boolean().default(true)
+  })
+  .strict();
+
+export const PluginSecuritySchema = z
+  .object({
+    sandbox: z.literal("trusted-local").default("trusted-local"),
+    permissions: z.array(PluginPermissionSchema).default([])
+  })
+  .strict()
+  .default({ sandbox: "trusted-local", permissions: [] });
+
 export const PluginManifestSchema = z
   .object({
     id: PluginIdSchema,
@@ -70,6 +110,7 @@ export const PluginManifestSchema = z
       minVersion: z.string().regex(SEMVER_REGEX).optional(),
       maxVersion: z.string().regex(SEMVER_REGEX).optional()
     }),
+    security: PluginSecuritySchema,
     metadata: z.record(z.string(), z.unknown()).default({})
   })
   .strict()
@@ -117,6 +158,55 @@ export const EnabledPluginExtensionsSchema = z.object({
   workflowStepProviders: z.array(WorkflowStepProviderExtensionSchema)
 });
 
+export const PluginRiskLevelSchema = z.enum([
+  "low",
+  "medium",
+  "high",
+  "critical"
+]);
+
+export const PluginCompatibilityStatusSchema = z.enum([
+  "compatible",
+  "incompatible",
+  "unknown"
+]);
+
+export const PluginCompatibilityReviewSchema = z.object({
+  status: PluginCompatibilityStatusSchema,
+  app: z.literal("feudal-coding-agents"),
+  currentVersion: z.string().regex(SEMVER_REGEX).optional(),
+  minVersion: z.string().regex(SEMVER_REGEX).optional(),
+  maxVersion: z.string().regex(SEMVER_REGEX).optional(),
+  reason: z.string().min(1)
+});
+
+export const PluginSecurityReviewSchema = z.object({
+  pluginId: PluginIdSchema,
+  riskLevel: PluginRiskLevelSchema,
+  approvalRequired: z.boolean(),
+  permissions: z.array(PluginPermissionSchema),
+  findings: z.array(PluginDiagnosticSchema),
+  recommendations: z.array(z.string()).default([]),
+  reviewedAt: z.string()
+});
+
+export const PluginMarketplaceStateSchema = z.enum([
+  ...PLUGIN_LIFECYCLE_STATES,
+  "available"
+]);
+
+export const PluginMarketplaceEntrySchema = z.object({
+  pluginId: PluginIdSchema,
+  name: z.string().min(1),
+  version: z.string().regex(SEMVER_REGEX),
+  description: z.string().optional(),
+  state: PluginMarketplaceStateSchema,
+  sourceKind: z.string().min(1),
+  extensionTypes: z.array(PluginExtensionPointTypeSchema),
+  compatibility: PluginCompatibilityReviewSchema,
+  security: PluginSecurityReviewSchema
+});
+
 export type PluginLifecycleState = z.infer<
   typeof PluginLifecycleStateSchema
 >;
@@ -129,6 +219,12 @@ export type WorkflowStepProviderExtension = z.infer<
   typeof WorkflowStepProviderExtensionSchema
 >;
 export type PluginExtensionPoint = z.infer<typeof PluginExtensionPointSchema>;
+export type PluginPermissionType = z.infer<typeof PluginPermissionTypeSchema>;
+export type PluginPermissionAccess = z.infer<
+  typeof PluginPermissionAccessSchema
+>;
+export type PluginPermission = z.infer<typeof PluginPermissionSchema>;
+export type PluginSecurity = z.infer<typeof PluginSecuritySchema>;
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;
 export type PluginDiagnostic = z.infer<typeof PluginDiagnosticSchema>;
 export type PluginSource = z.infer<typeof PluginSourceSchema>;
@@ -136,4 +232,17 @@ export type PluginRecord = z.infer<typeof PluginRecordSchema>;
 export type EnabledPluginExtensions = z.infer<
   typeof EnabledPluginExtensionsSchema
 >;
-
+export type PluginRiskLevel = z.infer<typeof PluginRiskLevelSchema>;
+export type PluginCompatibilityStatus = z.infer<
+  typeof PluginCompatibilityStatusSchema
+>;
+export type PluginCompatibilityReview = z.infer<
+  typeof PluginCompatibilityReviewSchema
+>;
+export type PluginSecurityReview = z.infer<
+  typeof PluginSecurityReviewSchema
+>;
+export type PluginMarketplaceState = z.infer<typeof PluginMarketplaceStateSchema>;
+export type PluginMarketplaceEntry = z.infer<
+  typeof PluginMarketplaceEntrySchema
+>;

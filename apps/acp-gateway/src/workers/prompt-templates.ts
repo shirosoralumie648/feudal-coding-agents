@@ -6,6 +6,10 @@ export function renderAnalystPrompt(input: string) {
   return `Produce a decision brief as JSON.\n\n${input}`;
 }
 
+export function renderFactCheckerPrompt(input: string) {
+  return `Check the plan's references and evidence, returning only non-blocking findings as JSON.\n\n${input}`;
+}
+
 export function renderAuditorPrompt(input: string) {
   return `Review this plan for consistency and risk. Return JSON only.\n\n${input}`;
 }

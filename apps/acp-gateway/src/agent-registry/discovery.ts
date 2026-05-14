@@ -1,148 +1,123 @@
-/**
- * Agent Discovery Service - Query and filter agents by capabilities
- *
- * Provides discovery mechanisms for finding agents by:
- * - Exact capability match
- * - Glob/regex pattern matching (e.g., "code-*" per D-07)
- * - Health status filtering
- * - Combined queries
- */
-
-import type { AgentManifest, AgentHealthStatus } from "./types";
+import type { AgentMetadata, AgentStatus, DiscoveryQuery, DiscoveryResult } from "./types";
 import type { AgentRegistry } from "./registry";
 
-// ── Types ──────────────────────────────────────────────
+type WatchCallback = (agents: AgentMetadata[]) => void;
 
-export interface DiscoveryQuery {
-  capabilities?: string[];
-  capabilityPattern?: string | RegExp;
-  health?: AgentHealthStatus | AgentHealthStatus[];
+function matchesCapability(agent: AgentMetadata, capability: string): boolean {
+  return agent.capabilities.includes(capability);
 }
 
-export interface Unsubscribe {
-  (): void;
+function globToRegex(glob: string): RegExp {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
 }
 
-type WatchCallback = (agents: AgentManifest[]) => void;
+function matchesMetadata(
+  agentMetadata: Record<string, unknown>,
+  queryMetadata: Record<string, unknown>
+): boolean {
+  return Object.entries(queryMetadata).every(([key, value]) => {
+    const candidate = agentMetadata[key];
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      typeof candidate === "object" &&
+      candidate !== null &&
+      !Array.isArray(candidate)
+    ) {
+      return matchesMetadata(
+        candidate as Record<string, unknown>,
+        value as Record<string, unknown>
+      );
+    }
 
-// ── Implementation ──────────────────────────────────────
+    return Object.is(candidate, value);
+  });
+}
 
 export class AgentDiscoveryService {
-  private readonly registry: AgentRegistry;
   private readonly watchers = new Map<WatchCallback, DiscoveryQuery>();
 
-  constructor(registry: AgentRegistry) {
-    this.registry = registry;
-
-    // Auto-subscribe to registry changes
+  constructor(private readonly registry: AgentRegistry) {
     this.registry.onChange(() => {
       this.notifyWatchers();
     });
   }
 
-  /**
-   * Find agents with a specific capability (exact match).
-   */
-  findByCapability(capability: string): AgentManifest[] {
-    return this.registry.listAgents().filter((agent) =>
-      agent.capabilities.some((cap) => cap.id === capability)
-    );
+  findByCapability(capability: string): AgentMetadata[] {
+    return this.registry
+      .listAgents()
+      .filter((agent) => matchesCapability(agent, capability));
   }
 
-  /**
-   * Find agents matching a capability pattern.
-   * Supports glob-style patterns like "code-*" per D-07.
-   */
-  findByCapabilityPattern(pattern: string | RegExp): AgentManifest[] {
+  findByCapabilityPattern(pattern: string | RegExp): AgentMetadata[] {
     const regex = typeof pattern === "string" ? globToRegex(pattern) : pattern;
-
     return this.registry.listAgents().filter((agent) =>
-      agent.capabilities.some((cap) => regex.test(cap.id))
+      agent.capabilities.some((capability) => regex.test(capability))
     );
   }
 
-  /**
-   * Find agents by health status.
-   */
-  findByHealth(health: AgentHealthStatus | AgentHealthStatus[]): AgentManifest[] {
-    const healthArray = Array.isArray(health) ? health : [health];
-
-    return this.registry.listAgents().filter((agent) =>
-      healthArray.includes(agent.health)
-    );
+  findByStatus(status: AgentStatus | AgentStatus[]): AgentMetadata[] {
+    const statuses = Array.isArray(status) ? status : [status];
+    return this.registry.listAgents().filter((agent) => statuses.includes(agent.status));
   }
 
-  /**
-   * Query agents with combined filters.
-   */
-  query(query: DiscoveryQuery): AgentManifest[] {
+  findByMetadata(metadata: Record<string, unknown>): AgentMetadata[] {
+    return this.registry
+      .listAgents()
+      .filter((agent) => matchesMetadata(agent.metadata, metadata));
+  }
+
+  query(query: DiscoveryQuery): DiscoveryResult {
     let agents = this.registry.listAgents();
 
-    if (query.capabilities) {
+    if (query.capabilities instanceof RegExp) {
+      const capabilityPattern = query.capabilities;
       agents = agents.filter((agent) =>
-        query.capabilities!.some((cap) =>
-          agent.capabilities.some((agentCap) => agentCap.id === cap)
-        )
+        agent.capabilities.some((capability) => capabilityPattern.test(capability))
+      );
+    } else if (query.capabilities) {
+      const capabilities = query.capabilities;
+      agents = agents.filter((agent) =>
+        capabilities.some((capability) => matchesCapability(agent, capability))
       );
     }
 
     if (query.capabilityPattern) {
       const regex =
-        typeof query.capabilityPattern === "string"
-          ? globToRegex(query.capabilityPattern)
-          : query.capabilityPattern;
-
+        query.capabilityPattern instanceof RegExp
+          ? query.capabilityPattern
+          : globToRegex(query.capabilityPattern);
       agents = agents.filter((agent) =>
-        agent.capabilities.some((cap) => regex.test(cap.id))
+        agent.capabilities.some((capability) => regex.test(capability))
       );
     }
 
-    if (query.health) {
-      const healthArray = Array.isArray(query.health) ? query.health : [query.health];
-      agents = agents.filter((agent) => healthArray.includes(agent.health));
+    if (query.status) {
+      agents = agents.filter((agent) => query.status?.includes(agent.status));
     }
 
-    return agents;
+    if (query.metadata) {
+      agents = agents.filter((agent) => matchesMetadata(agent.metadata, query.metadata ?? {}));
+    }
+
+    return {
+      agents,
+      total: agents.length
+    };
   }
 
-  /**
-   * Watch for changes to agents matching a query.
-   * Returns an unsubscribe function.
-   *
-   * Note: This is a simplified implementation that watches for health changes.
-   * A full implementation would track all registry events.
-   */
-  watch(query: DiscoveryQuery, callback: WatchCallback): Unsubscribe {
+  watch(query: DiscoveryQuery, callback: WatchCallback): () => void {
     this.watchers.set(callback, query);
-
-    // Return unsubscribe function
     return () => {
       this.watchers.delete(callback);
     };
   }
 
-  /**
-   * Notify watchers of a change. Called by the registry when an agent changes.
-   * This is an internal method - the registry should call it when health changes.
-   */
-  notifyWatchers(): void {
+  private notifyWatchers(): void {
     for (const [callback, query] of this.watchers) {
-      const agents = this.query(query);
-      callback(agents);
+      callback(this.query(query).agents);
     }
   }
-}
-
-// ── Helpers ──────────────────────────────────────────────
-
-/**
- * Convert a glob-style pattern to a RegExp.
- * Supports * (matches any characters except /)
- */
-function globToRegex(glob: string): RegExp {
-  // Escape special regex characters except *
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  // Convert * to .*
-  const pattern = escaped.replace(/\*/g, ".*");
-  return new RegExp(`^${pattern}$`);
 }

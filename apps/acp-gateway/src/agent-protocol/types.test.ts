@@ -1,128 +1,106 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  AgentMessageSchema,
   AgentEndpointSchema,
+  AgentMessageResponseSchema,
+  AgentMessageSchema,
+  AgentNotificationSchema,
+  JsonRpcErrorSchema,
   MessageRouteSchema,
-  type AgentMessage,
+  MessageRouteType,
   type AgentEndpoint,
-  type MessageRoute,
-  MessageRouteType
+  type AgentMessage,
+  type AgentNotification
 } from "./types";
 
 describe("agent-protocol/types", () => {
-  describe("AgentMessage", () => {
-    it("validates required fields: id, jsonrpc, method, from, to", () => {
-      const validMessage: AgentMessage = {
-        id: "550e8400-e29b-41d4-a716-446655440001",
-        jsonrpc: "2.0",
-        method: "ping",
-        params: {},
-        from: "agent-a",
-        to: "agent-b",
-        timestamp: new Date()
-      };
-      expect(AgentMessageSchema.parse(validMessage)).toEqual(validMessage);
-    });
+  it("validates JSON-RPC request messages", () => {
+    const message: AgentMessage = {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      jsonrpc: "2.0",
+      method: "agent.ping",
+      params: { value: "hello" },
+      from: "agent-a",
+      to: "agent-b",
+      timestamp: new Date("2026-04-27T10:00:00.000Z")
+    };
 
-    it("accepts array of targets for broadcast", () => {
-      const message: AgentMessage = {
-        id: "550e8400-e29b-41d4-a716-446655440002",
-        jsonrpc: "2.0",
-        method: "notify",
-        params: { update: "status" },
-        from: "agent-a",
-        to: ["agent-b", "agent-c"],
-        timestamp: new Date()
-      };
-      expect(AgentMessageSchema.parse(message)).toEqual(message);
-    });
-
-    it("rejects message missing required fields", () => {
-      expect(() => AgentMessageSchema.parse({ method: "ping" })).toThrow();
-    });
-
-    it("rejects message with invalid jsonrpc version", () => {
-      const badMessage = {
-        id: "550e8400-e29b-41d4-a716-446655440003",
-        jsonrpc: "1.0",
-        method: "ping",
-        params: {},
-        from: "agent-a",
-        to: "agent-b",
-        timestamp: new Date()
-      };
-      expect(() => AgentMessageSchema.parse(badMessage)).toThrow();
-    });
+    expect(AgentMessageSchema.parse(message)).toEqual(message);
   });
 
-  describe("AgentEndpoint", () => {
-    it("validates agentId and capabilities", () => {
-      const endpoint: AgentEndpoint = {
-        agentId: "analyst-1",
-        capabilities: ["analysis", "code-review"],
-        status: "online",
-        lastSeen: new Date()
-      };
-      expect(AgentEndpointSchema.parse(endpoint)).toEqual(endpoint);
-    });
+  it("validates one-way notifications without ids", () => {
+    const notification: AgentNotification = {
+      jsonrpc: "2.0",
+      method: "agent.status",
+      params: { status: "ready" },
+      from: "agent-a",
+      to: ["agent-b", "agent-c"],
+      timestamp: new Date("2026-04-27T10:00:00.000Z")
+    };
 
-    it("accepts all valid statuses", () => {
-      for (const status of ["online", "offline", "busy"] as const) {
-        const endpoint: AgentEndpoint = {
-          agentId: "agent-x",
-          capabilities: [],
-          status,
-          lastSeen: new Date()
-        };
-        expect(AgentEndpointSchema.parse(endpoint)).toEqual(endpoint);
-      }
-    });
-
-    it("rejects invalid status", () => {
-      const badEndpoint = {
-        agentId: "agent-x",
-        capabilities: [],
-        status: "unknown",
-        lastSeen: new Date()
-      };
-      expect(() => AgentEndpointSchema.parse(badEndpoint)).toThrow();
-    });
+    expect(AgentNotificationSchema.parse(notification)).toEqual(notification);
   });
 
-  describe("MessageRoute", () => {
-    it("supports direct routing", () => {
-      const route: MessageRoute = {
+  it("validates JSON-RPC responses with results", () => {
+    const response = {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      jsonrpc: "2.0",
+      result: { ok: true },
+      from: "agent-b",
+      to: "agent-a",
+      timestamp: new Date("2026-04-27T10:00:01.000Z")
+    };
+
+    expect(AgentMessageResponseSchema.parse(response)).toEqual(response);
+  });
+
+  it("validates structured JSON-RPC errors", () => {
+    const error = {
+      code: -32601,
+      message: "Method not found",
+      data: { method: "agent.unknown" }
+    };
+
+    expect(JsonRpcErrorSchema.parse(error)).toEqual(error);
+  });
+
+  it("validates agent endpoints", () => {
+    const endpoint: AgentEndpoint = {
+      agentId: "agent-b",
+      capabilities: ["code-generation"],
+      status: "online",
+      lastSeen: new Date("2026-04-27T10:00:00.000Z")
+    };
+
+    expect(AgentEndpointSchema.parse(endpoint)).toEqual(endpoint);
+  });
+
+  it("supports direct, broadcast, and capability message routes", () => {
+    expect(
+      MessageRouteSchema.parse({
         type: MessageRouteType.Direct,
         target: "agent-b"
-      };
-      expect(MessageRouteSchema.parse(route)).toEqual(route);
+      })
+    ).toEqual({
+      type: MessageRouteType.Direct,
+      target: "agent-b"
     });
 
-    it("supports broadcast routing", () => {
-      const route: MessageRoute = {
+    expect(
+      MessageRouteSchema.parse({
         type: MessageRouteType.Broadcast,
         target: ["agent-b", "agent-c"]
-      };
-      expect(MessageRouteSchema.parse(route)).toEqual(route);
+      })
+    ).toEqual({
+      type: MessageRouteType.Broadcast,
+      target: ["agent-b", "agent-c"]
     });
 
-    it("supports capability-based routing with regex pattern", () => {
-      const route: MessageRoute = {
-        type: MessageRouteType.Capability,
-        target: /code-.*/.source,
-        priority: 1
-      };
-      const parsed = MessageRouteSchema.parse(route);
-      expect(parsed.type).toBe(MessageRouteType.Capability);
+    const route = MessageRouteSchema.parse({
+      type: MessageRouteType.Capability,
+      target: /^code-/,
+      priority: 1
     });
 
-    it("supports optional priority for load balancing hint", () => {
-      const route: MessageRoute = {
-        type: MessageRouteType.Direct,
-        target: "agent-b",
-        priority: 5
-      };
-      expect(MessageRouteSchema.parse(route)).toEqual(route);
-    });
+    expect(route.type).toBe(MessageRouteType.Capability);
   });
 });

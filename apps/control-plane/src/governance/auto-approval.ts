@@ -141,15 +141,19 @@ export class AutoApprovalEngine {
       createdAt: new Date().toISOString(),
     };
 
-    // D-10: Write to event store with 'auto-approved' event type
-    await this.eventStore.append(`auto-approval:${taskId}`, {
-      type: "auto-approved",
-      payload: auditLog,
-      metadata: {
-        timestamp: new Date().toISOString(),
-        source: "auto-approval-engine",
-        version: "1.0.0",
-      },
+    await this.eventStore.append({
+      streamType: "auto-approval",
+      streamId: auditLog.id,
+      expectedVersion: 0,
+      events: [{
+        eventType: "auto-approved",
+        payloadJson: auditLog as unknown as Record<string, unknown>,
+        metadataJson: {
+          timestamp: new Date().toISOString(),
+          source: "auto-approval-engine",
+          version: "1.0.0",
+        },
+      }],
     });
   }
 

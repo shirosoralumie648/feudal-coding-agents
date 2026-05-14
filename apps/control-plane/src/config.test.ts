@@ -43,7 +43,26 @@ describe("createLazyTaskStore", () => {
       replayTaskAtEventId: vi.fn().mockResolvedValue(undefined),
       getRecoverySummary: vi.fn().mockResolvedValue({
         tasksNeedingRecovery: 0,
-        runsNeedingRecovery: 0
+        runsNeedingRecovery: 0,
+        taskBreakdown: {
+          healthy: 0,
+          replaying: 0,
+          recoveryRequired: 0
+        },
+        runRecoveryBreakdown: {
+          healthy: 0,
+          replaying: 0,
+          recoveryRequired: 0
+        },
+        runStatusBreakdown: {
+          created: 0,
+          inProgress: 0,
+          awaiting: 0,
+          completed: 0,
+          failed: 0,
+          cancelling: 0,
+          cancelled: 0
+        }
       }),
       rebuildProjectionsIfNeeded: vi.fn().mockResolvedValue(undefined)
     } satisfies TaskStore;

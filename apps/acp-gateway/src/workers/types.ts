@@ -3,6 +3,7 @@ import type { ACPMessage } from "@feudal/acp";
 export const gatewayWorkerNames = [
   "intake-agent",
   "analyst-agent",
+  "fact-checker-agent",
   "auditor-agent",
   "critic-agent",
   "gongbu-executor",

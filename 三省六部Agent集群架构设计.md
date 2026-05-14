@@ -1,5 +1,13 @@
 # 三省六部制 Agent 集群架构设计
 
+> **文档状态：历史架构叙事 / 灵感来源（非当前运行时权威文档）**
+>
+> 使用说明：
+> - 本文档用于保留项目早期的制度化架构设想与命名来源。
+> - 本文档**不得**作为“当前系统已经实现了什么”的事实依据。
+> - 判断当前实现边界，请优先查看：`CURRENT_STATUS.md`、`ROADMAP.md`、`README.md`、`apps/acp-gateway/src/manifests.ts`、`apps/control-plane/src/services/orchestrator-service.ts`、`packages/contracts/src/index.ts`。
+> - 当前真实运行角色与系统边界，以代码和配置为准，而不是以本文档中的完整组织映射为准。
+
 ## 1. 设计目标
 - 将复杂任务拆解为“决策-审议-执行”闭环，降低单 Agent 决策偏差。
 - 用组织分权实现稳定扩展：新增能力时只扩展对应“部”而非重构全系统。

@@ -406,7 +406,169 @@ function buildStoredTask(
   });
 }
 
-describe("orchestrator service durability", () => {
+  it("keeps the createTask event order after shared flow extraction", async () => {
+    const events: string[] = [];
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: createRecordingACPClient(events),
+        mockClient: createMockACPClient()
+      }),
+      store: new RecordingTaskStore(events)
+    });
+
+    const created = await service.createTask({
+      id: "task-shared-flow-create",
+      title: "Shared flow create",
+      prompt: "Create a task through shared flow orchestration",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(created.status).toBe("completed");
+    expect(events).toEqual([
+      expect.stringMatching(/^save:task\.submitted:intake:/),
+      "run:intake-agent",
+      expect.stringMatching(/^save:task\.intake_completed:planning:/),
+      "run:analyst-agent",
+      expect.stringMatching(/^save:task\.planning_completed:review:/),
+      "run:auditor-agent",
+      "run:critic-agent",
+      expect.stringMatching(/^save:task\.review_approved_without_approval:dispatching:/),
+      "run:gongbu-executor",
+      "run:xingbu-verifier",
+      expect.stringMatching(/^save:task\.completed:completed:/)
+    ]);
+  });
+
+  it("keeps the approveTask event order after shared flow extraction", async () => {
+    const events: string[] = [];
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: createRecordingACPClient(events),
+        mockClient: createMockACPClient()
+      }),
+      store: new RecordingTaskStore(events)
+    });
+
+    const created = await service.createTask({
+      id: "task-shared-flow-approve",
+      title: "Shared flow approve",
+      prompt: "Create a task requiring approval",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    expect(created.status).toBe("awaiting_approval");
+
+    events.length = 0;
+
+    const approved = await service.approveTask(created.id);
+
+    expect(approved.status).toBe("completed");
+    expect(events).toEqual([
+      expect.stringMatching(/^respond:/),
+      expect.stringMatching(/^save:task\.approved:dispatching:/),
+      "run:gongbu-executor",
+      "run:xingbu-verifier",
+      expect.stringMatching(/^save:task\.completed:completed:/)
+    ]);
+  });
+
+  it("keeps the takeoverTask event order after shared flow extraction", async () => {
+    const events: string[] = [];
+    const store = new RecordingTaskStore(events);
+    await store.saveTask(
+      buildStoredTask({
+        id: "task-shared-flow-takeover",
+        status: "awaiting_approval",
+        approvalRunId: "run-approval-old",
+        approvalRequest: {
+          runId: "run-approval-old",
+          prompt: "Approve the decision brief?",
+          actions: ["approve", "reject"]
+        },
+        operatorAllowedActions: ["takeover", "abandon"]
+      }),
+      "task.awaiting_approval",
+      0
+    );
+
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: createRecordingACPClient(events),
+        mockClient: createMockACPClient()
+      }),
+      store
+    });
+
+    events.length = 0;
+
+    const takenOver = await service.takeoverTask(
+      "task-shared-flow-takeover",
+      "Re-plan around the new rollback constraints."
+    );
+
+    expect(takenOver.status).toBe("awaiting_approval");
+    expect(events).toEqual([
+      expect.stringMatching(/^save:task\.operator_takeover_submitted:planning:/),
+      "run:analyst-agent",
+      expect.stringMatching(/^save:task\.planning_completed:review:/),
+      "run:auditor-agent",
+      "run:critic-agent",
+      expect.stringMatching(/^save:task\.review_approved:awaiting_approval:/),
+      "await:approval-gate",
+      expect.stringMatching(/^save:task\.awaiting_approval:awaiting_approval:/)
+    ]);
+  });
+
+  it("keeps the recoverTask event order after shared flow extraction", async () => {
+    const events: string[] = [];
+    const store = new RecordingTaskStore(events);
+    await store.saveTask(
+      buildStoredTask({
+        id: "task-shared-flow-recover",
+        status: "failed",
+        history: [
+          {
+            status: "failed",
+            at: "2026-04-06T00:06:00.000Z",
+            note: "task.execution_failed"
+          }
+        ],
+        recoveryState: "recovery_required",
+        recoveryReason: "Recovered failed task requires operator review",
+        operatorAllowedActions: ["recover", "takeover", "abandon"]
+      }),
+      "task.execution_failed",
+      0
+    );
+
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: createRecordingACPClient(events),
+        mockClient: createMockACPClient()
+      }),
+      store
+    });
+
+    events.length = 0;
+
+    const recovered = await service.recoverTask(
+      "task-shared-flow-recover",
+      "Retry after fixing the execution dependency."
+    );
+
+    expect(recovered.status).toBe("completed");
+    expect(events).toEqual([
+      expect.stringMatching(/^save:task\.operator_recovered:dispatching:/),
+      "run:gongbu-executor",
+      "run:xingbu-verifier",
+      expect.stringMatching(/^save:task\.completed:completed:/)
+    ]);
+  });
+
   it("completes directly when approval is not required and sensitivity is low", async () => {
     const service = createServiceWithGateway();
 
@@ -483,6 +645,40 @@ describe("orchestrator service durability", () => {
     expect(revised.governance?.reviewVerdict).toBe("approved");
     expect(revised.governance?.allowedActions).toEqual(["approve", "reject"]);
     expect(revised.revisionRequest).toBeUndefined();
+  });
+
+  it("exposes split governance, operator, and replay collaborators while preserving behavior", async () => {
+    const service = createServiceWithGateway();
+
+    const created = await service.createTask({
+      id: "task-collaborator-split",
+      title: "Collaborator split task",
+      prompt: "Exercise the split collaborators end to end",
+      allowMock: false,
+      requiresApproval: true,
+      sensitivity: "medium"
+    });
+
+    expect(created.status).toBe("awaiting_approval");
+
+    const runs = await service.listTaskRuns(created.id);
+    const artifacts = await service.listTaskArtifacts(created.id);
+    const events = await service.listTaskEvents(created.id);
+    const diffs = await service.listTaskDiffs(created.id);
+    const replay = await service.replayTaskAtEventId(created.id, created.latestEventId);
+    const recoverySummary = await service.getRecoverySummary();
+
+    expect(runs?.map((run) => run.phase)).toContain("approval");
+    expect(artifacts?.some((artifact) => artifact.kind === "decision-brief")).toBe(true);
+    expect(events?.some((event) => event.eventType === "task.awaiting_approval")).toBe(true);
+    expect(diffs?.length).toBeGreaterThan(0);
+    expect(replay?.task.id).toBe(created.id);
+    expect(recoverySummary.runsNeedingRecovery).toBe(0);
+
+    const approved = await service.submitGovernanceAction(created.id, "approve");
+
+    expect(approved.status).toBe("completed");
+    expect(await service.listOperatorActions(created.id)).toEqual([]);
   });
 
   it("submits approve and revise through the unified governance dispatcher", async () => {
@@ -707,6 +903,116 @@ describe("orchestrator service durability", () => {
     ]);
   });
 
+  it("runs an enabled fact-checker, records fact-check and assignment artifacts, and dispatches executor from assignment input", async () => {
+    const metadataLog: string[] = [];
+    const executorInputs: string[] = [];
+    const base = createMockACPClient();
+    const factCheckEnabledClient: ACPClient = {
+      ...base,
+      async listAgents() {
+        const manifests = await base.listAgents();
+
+        return manifests.map((manifest) =>
+          manifest.name === "fact-checker-agent"
+            ? { ...manifest, enabledByDefault: true }
+            : manifest
+        );
+      },
+      async runAgent(input: ACPRunAgentInput) {
+        metadataLog.push(`${input.agent}:${input.metadata?.taskId as string | undefined}`);
+
+        if (input.agent === "fact-checker-agent") {
+          return {
+            id: "run-fact-check",
+            agent: "fact-checker-agent",
+            status: "completed",
+            phase: "planning",
+            messages: input.messages,
+            artifacts: [
+              {
+                id: "artifact-fact-check",
+                name: "fact-check.json",
+                mimeType: "application/json",
+                content: {
+                  summary: "References checked with no blocking issues.",
+                  findings: [],
+                  policyReasons: ["fact-check completed without blocking issues"]
+                }
+              }
+            ]
+          };
+        }
+
+        if (input.agent === "gongbu-executor") {
+          executorInputs.push(input.messages[0]?.content ?? "");
+        }
+
+        return base.runAgent(input);
+      }
+    };
+
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: factCheckEnabledClient,
+        mockClient: createMockACPClient()
+      })
+    });
+
+    const created = await service.createTask({
+      id: "task-fact-check-enabled",
+      title: "Fact checker task",
+      prompt: "Plan with supporting references",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(created.status).toBe("completed");
+    expect(created.artifacts.some((artifact) => artifact.kind === "fact-check")).toBe(true);
+    expect(created.artifacts.some((artifact) => artifact.kind === "assignment")).toBe(true);
+    expect(metadataLog).toEqual([
+      "intake-agent:task-fact-check-enabled",
+      "analyst-agent:task-fact-check-enabled",
+      "fact-checker-agent:task-fact-check-enabled",
+      "auditor-agent:task-fact-check-enabled",
+      "critic-agent:task-fact-check-enabled",
+      "gongbu-executor:task-fact-check-enabled",
+      "xingbu-verifier:task-fact-check-enabled"
+    ]);
+    expect(executorInputs[0]).toContain("assignment");
+  });
+
+  it("keeps fact-checker disabled by default and preserves the existing happy path", async () => {
+    const metadataLog: string[] = [];
+    const base = createMockACPClient();
+    const client: ACPClient = {
+      ...base,
+      async runAgent(input: ACPRunAgentInput) {
+        metadataLog.push(input.agent);
+        return base.runAgent(input);
+      }
+    };
+    const service = createOrchestratorService({
+      runGateway: createTaskRunGateway({
+        realClient: client,
+        mockClient: createMockACPClient()
+      })
+    });
+
+    const created = await service.createTask({
+      id: "task-fact-check-disabled",
+      title: "Fact checker disabled task",
+      prompt: "Keep the existing happy path",
+      allowMock: false,
+      requiresApproval: false,
+      sensitivity: "low"
+    });
+
+    expect(created.status).toBe("completed");
+    expect(created.artifacts.some((artifact) => artifact.kind === "fact-check")).toBe(false);
+    expect(metadataLog).not.toContain("fact-checker-agent");
+  });
+
   it("persists task state before opening the approval gate", async () => {
     const events: string[] = [];
     const service = createOrchestratorService({
@@ -892,7 +1198,6 @@ describe("orchestrator service durability", () => {
       service.recoverTask("task-operator-service", "Retry anyway")
     ).rejects.toThrow("does not allow operator action recover");
   });
-});
 
 describe("orchestrator service operator actions", () => {
   it("recovers a failed task and records requested/applied operator history", async () => {

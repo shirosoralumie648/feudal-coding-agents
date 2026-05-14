@@ -5,7 +5,7 @@
  * All endpoints protected by RBAC permission checks.
  */
 
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type {
   Permission,
@@ -14,6 +14,10 @@ import type {
 } from "@feudal/contracts";
 import { RoleSchema, RoleAssignmentSchema } from "@feudal/contracts";
 import { requirePermission } from "../governance/rbac-middleware";
+import {
+  createRoleHierarchyCache,
+  type RoleHierarchyCache
+} from "../governance/rbac-policy";
 
 // ============================================================================
 // Request/Response Schemas
@@ -269,6 +273,18 @@ class RoleStore {
 // Singleton store instance
 const roleStore = new RoleStore();
 
+type RoleContextRequest = FastifyRequest & {
+  roleDefinitions?: Map<string, Role>;
+  hierarchyCache?: RoleHierarchyCache;
+};
+
+async function attachRoleContext(request: FastifyRequest): Promise<void> {
+  const roles = roleStore.listRoles();
+  const typedRequest = request as RoleContextRequest;
+  typedRequest.roleDefinitions = new Map(roles.map((role) => [role.id, role]));
+  typedRequest.hierarchyCache = createRoleHierarchyCache(roles);
+}
+
 // ============================================================================
 // Route Handlers
 // ============================================================================
@@ -299,7 +315,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.get<{ Querystring: z.infer<typeof ListRolesQuerySchema> }>(
     "/api/roles",
     {
-      preHandler: requirePermission({ resource: "roles", action: "read" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "read" })
+      ]
     },
     async (request, reply) => {
       const query = ListRolesQuerySchema.parse(request.query);
@@ -311,7 +330,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.get<{ Params: z.infer<typeof RoleIdParamsSchema> }>(
     "/api/roles/:id",
     {
-      preHandler: requirePermission({ resource: "roles", action: "read" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "read" })
+      ]
     },
     async (request, reply) => {
       const params = RoleIdParamsSchema.parse(request.params);
@@ -327,7 +349,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.post(
     "/api/roles",
     {
-      preHandler: requirePermission({ resource: "roles", action: "create" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "create" })
+      ]
     },
     async (request, reply) => {
       const body = CreateRoleBodySchema.parse(request.body);
@@ -361,7 +386,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.put<{ Params: z.infer<typeof RoleIdParamsSchema> }>(
     "/api/roles/:id",
     {
-      preHandler: requirePermission({ resource: "roles", action: "update" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "update" })
+      ]
     },
     async (request, reply) => {
       const params = RoleIdParamsSchema.parse(request.params);
@@ -386,7 +414,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.delete<{ Params: z.infer<typeof RoleIdParamsSchema> }>(
     "/api/roles/:id",
     {
-      preHandler: requirePermission({ resource: "roles", action: "delete" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "delete" })
+      ]
     },
     async (request, reply) => {
       const params = RoleIdParamsSchema.parse(request.params);
@@ -410,7 +441,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.get<{ Querystring: z.infer<typeof ListAssignmentsQuerySchema> }>(
     "/api/roles/assignments",
     {
-      preHandler: requirePermission({ resource: "roles", action: "read" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "read" })
+      ]
     },
     async (request) => {
       const query = ListAssignmentsQuerySchema.parse(request.query);
@@ -422,7 +456,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.post(
     "/api/roles/assignments",
     {
-      preHandler: requirePermission({ resource: "roles", action: "admin" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "admin" })
+      ]
     },
     async (request, reply) => {
       const body = CreateAssignmentBodySchema.parse(request.body);
@@ -454,7 +491,10 @@ export function registerRoleRoutes(app: FastifyInstance): void {
   app.delete<{ Params: z.infer<typeof RoleAssignmentIdParamsSchema> }>(
     "/api/roles/assignments/:id",
     {
-      preHandler: requirePermission({ resource: "roles", action: "admin" })
+      preHandler: [
+        attachRoleContext,
+        requirePermission({ resource: "roles", action: "admin" })
+      ]
     },
     async (request, reply) => {
       const params = RoleAssignmentIdParamsSchema.parse(request.params);

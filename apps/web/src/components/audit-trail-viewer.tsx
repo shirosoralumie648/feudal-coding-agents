@@ -129,7 +129,7 @@ export function AuditTrailViewer() {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
-  const searchDebounceRef = useRef<number>();
+  const searchDebounceRef = useRef<number | undefined>(undefined);
 
   const loadEntries = useCallback(
     async (

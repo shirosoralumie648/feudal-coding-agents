@@ -4,6 +4,7 @@ import type { TaskConsoleRecord } from "../lib/api";
 interface OperatorConsolePanelProps {
   task: TaskConsoleRecord;
   actions: OperatorActionRecord[];
+  error?: string;
   note: string;
   isSubmitting: boolean;
   onNoteChange: (value: string) => void;
@@ -16,6 +17,7 @@ export function OperatorConsolePanel(props: OperatorConsolePanelProps) {
   const {
     task,
     actions,
+    error,
     note,
     isSubmitting,
     onNoteChange,
@@ -43,6 +45,7 @@ export function OperatorConsolePanel(props: OperatorConsolePanelProps) {
       </p>
       {hasAllowedActions ? (
         <>
+          {error ? <p className="field-note">{error}</p> : null}
           <label>
             Operator note
             <textarea

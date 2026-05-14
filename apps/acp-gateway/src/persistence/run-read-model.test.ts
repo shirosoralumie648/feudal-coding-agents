@@ -120,4 +120,98 @@ describe("run read model", () => {
 
     expect(run?.taskId).toBe("task-1");
   });
+
+  it("treats cancelled runs as stable after rebuild", async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    await runMigrations(pool);
+    const eventStore = createPostgresEventStore({ pool });
+    const readModel = createRunReadModel({ eventStore });
+
+    await eventStore.append({
+      streamType: "run",
+      streamId: "run-cancelled",
+      expectedVersion: 0,
+      events: [
+        {
+          eventType: "run.created",
+          payloadJson: {
+            id: "run-cancelled",
+            agent: "gongbu-executor",
+            status: "created",
+            phase: "execution",
+            messages: [],
+            artifacts: []
+          },
+          metadataJson: { actorType: "system" }
+        },
+        {
+          eventType: "run.status_transitioned",
+          payloadJson: {
+            id: "run-cancelled",
+            agent: "gongbu-executor",
+            status: "cancelled",
+            phase: "execution",
+            messages: [],
+            artifacts: []
+          },
+          metadataJson: { actorType: "system" }
+        }
+      ]
+    });
+
+    await readModel.rebuild();
+    const run = await readModel.getRun("run-cancelled");
+
+    expect(run?.recoveryState).toBe("healthy");
+    expect(run?.phase).toBe("execution");
+  });
+
+  it("marks cancelling runs as recovery_required after rebuild", async () => {
+    const db = newDb();
+    const { Pool } = db.adapters.createPg();
+    const pool = new Pool();
+    await runMigrations(pool);
+    const eventStore = createPostgresEventStore({ pool });
+    const readModel = createRunReadModel({ eventStore });
+
+    await eventStore.append({
+      streamType: "run",
+      streamId: "run-cancelling",
+      expectedVersion: 0,
+      events: [
+        {
+          eventType: "run.created",
+          payloadJson: {
+            id: "run-cancelling",
+            agent: "gongbu-executor",
+            status: "created",
+            phase: "execution",
+            messages: [],
+            artifacts: []
+          },
+          metadataJson: { actorType: "system" }
+        },
+        {
+          eventType: "run.status_transitioned",
+          payloadJson: {
+            id: "run-cancelling",
+            agent: "gongbu-executor",
+            status: "cancelling",
+            phase: "execution",
+            messages: [],
+            artifacts: []
+          },
+          metadataJson: { actorType: "system" }
+        }
+      ]
+    });
+
+    await readModel.rebuild();
+    const run = await readModel.getRun("run-cancelling");
+
+    expect(run?.recoveryState).toBe("recovery_required");
+    expect(run?.phase).toBe("execution");
+  });
 });

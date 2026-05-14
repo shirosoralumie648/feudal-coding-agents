@@ -21,6 +21,8 @@ export function AgentRegistryPanel(props: AgentRegistryPanelProps) {
               <strong>{agent.name}</strong>
               <span>{agent.role}</span>
             </div>
+            {agent.displayName ? <p>{agent.displayName}</p> : null}
+            {agent.narrativeAlias ? <small>{`Alias: ${agent.narrativeAlias}`}</small> : null}
             <p>{agent.description}</p>
             <small>{agent.capabilities.join(" / ")}</small>
           </li>

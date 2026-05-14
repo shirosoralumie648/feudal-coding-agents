@@ -9,6 +9,8 @@ import {
   buildRunEventInputs,
   toGatewayRunProjectionRecord
 } from "./persistence/run-event-codec";
+import { AgentRegistry } from "./agent-registry/registry";
+import { acpManifestToRegistryManifest } from "./agent-registry/seed";
 
 export type GatewayRecoveryState = "healthy" | "replaying" | "recovery_required";
 
@@ -22,6 +24,7 @@ export interface GatewayRunRecord {
   artifacts: ACPArtifact[];
   awaitPrompt?: string;
   allowedActions?: string[];
+  cancellationReason?: string;
 }
 
 export interface GatewayRunProjectionRecord extends GatewayRunRecord {

@@ -4,8 +4,13 @@ import {
   OperatorActionRecordSchema,
   OperatorActionRequestSchema,
   OperatorActionSummarySchema,
-  PluginManifestSchema,
+  RecoverySummarySchema,
   RecoveryStateSchema,
+  RunProjectionSchema,
+  TaskProjectionSchema,
+  PluginManifestSchema,
+  WorkflowPhaseSchema,
+  deriveWorkflowPhase,
   TaskRecordSchema,
   TaskSpecSchema,
   TaskStatusSchema
@@ -58,6 +63,23 @@ describe("contracts", () => {
 
   it("contains the operator abandoned state", () => {
     expect(TaskStatusSchema.options).toContain("abandoned");
+  });
+
+  it("contains explicit workflow phases for orchestration views", () => {
+    expect(WorkflowPhaseSchema.options).toEqual(
+      expect.arrayContaining([
+        "intake",
+        "planning",
+        "review",
+        "approval",
+        "execution",
+        "verification",
+        "revision",
+        "recovery",
+        "completed",
+        "terminal"
+      ])
+    );
   });
 
   it("accepts ACP run summaries and approval request metadata without governance", () => {
@@ -214,6 +236,7 @@ describe("contracts", () => {
       title: "Recover stuck task",
       prompt: "Handle takeover",
       status: "failed",
+      workflowPhase: "recovery",
       artifacts: [],
       history: [],
       runIds: [],
@@ -227,6 +250,37 @@ describe("contracts", () => {
       "takeover",
       "abandon"
     ]);
+    expect(result.workflowPhase).toBe("recovery");
+  });
+
+  it("derives approval, recovery, and terminal workflow phases from task state", () => {
+    expect(
+      deriveWorkflowPhase({
+        status: "awaiting_approval",
+        recoveryState: "healthy"
+      })
+    ).toBe("approval");
+
+    expect(
+      deriveWorkflowPhase({
+        status: "failed",
+        recoveryState: "healthy"
+      })
+    ).toBe("recovery");
+
+    expect(
+      deriveWorkflowPhase({
+        status: "executing",
+        recoveryState: "recovery_required"
+      })
+    ).toBe("recovery");
+
+    expect(
+      deriveWorkflowPhase({
+        status: "abandoned",
+        recoveryState: "healthy"
+      })
+    ).toBe("terminal");
   });
 
   it("accepts operator action history records", () => {
@@ -385,5 +439,75 @@ describe("contracts", () => {
 
     expect(recoveryState).toBe("healthy");
     expect(event.eventType).toBe("task.created");
+  });
+
+  it("accepts task projections, run projections, and recovery summaries as first-class api contracts", () => {
+    const taskProjection = TaskProjectionSchema.parse({
+      id: "task-11",
+      title: "Recover task projection contract",
+      prompt: "Exercise projected task fields",
+      status: "failed",
+      workflowPhase: "recovery",
+      artifacts: [],
+      history: [],
+      runIds: ["run-11"],
+      runs: [
+        {
+          id: "run-11",
+          agent: "gongbu-executor",
+          status: "failed",
+          phase: "execution"
+        }
+      ],
+      operatorAllowedActions: ["recover", "takeover", "abandon"],
+      createdAt: "2026-04-09T00:00:00.000Z",
+      updatedAt: "2026-04-09T00:05:00.000Z",
+      recoveryState: "recovery_required",
+      recoveryReason: "Recovered executing task requires operator review",
+      lastRecoveredAt: "2026-04-09T00:05:00.000Z",
+      latestEventId: 12,
+      latestProjectionVersion: 8
+    });
+    const runProjection = RunProjectionSchema.parse({
+      id: "run-11",
+      taskId: "task-11",
+      agent: "gongbu-executor",
+      status: "failed",
+      phase: "execution",
+      messages: [],
+      artifacts: [],
+      recoveryState: "healthy",
+      lastRecoveredAt: "2026-04-09T00:05:00.000Z",
+      latestEventId: 21,
+      latestProjectionVersion: 4
+    });
+    const recoverySummary = RecoverySummarySchema.parse({
+      tasksNeedingRecovery: 1,
+      runsNeedingRecovery: 2,
+      taskBreakdown: {
+        healthy: 3,
+        replaying: 0,
+        recoveryRequired: 1
+      },
+      runRecoveryBreakdown: {
+        healthy: 5,
+        replaying: 0,
+        recoveryRequired: 2
+      },
+      runStatusBreakdown: {
+        created: 1,
+        inProgress: 1,
+        awaiting: 1,
+        completed: 1,
+        failed: 1,
+        cancelling: 0,
+        cancelled: 0
+      }
+    });
+
+    expect(taskProjection.recoveryState).toBe("recovery_required");
+    expect(runProjection.latestProjectionVersion).toBe(4);
+    expect(recoverySummary.runsNeedingRecovery).toBe(2);
+    expect(recoverySummary.runStatusBreakdown.inProgress).toBe(1);
   });
 });

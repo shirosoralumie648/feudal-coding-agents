@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { TaskRecord } from "@feudal/contracts";
+import type { AuditEvent, TaskRecord } from "@feudal/contracts";
 import { AnalyticsService } from "./analytics-service";
 import { MemoryTaskStore } from "../store";
 
@@ -174,5 +174,72 @@ describe("AnalyticsService", () => {
 
     expect(service.getLatestSnapshot()).toEqual(snapshot);
   });
-});
 
+  it("loads audit events through the bulk source path when available", async () => {
+    const auditEvent: AuditEvent = {
+      id: 1,
+      streamType: "task",
+      streamId: "task-1",
+      eventType: "task.created",
+      eventVersion: 1,
+      occurredAt: "2026-05-02T00:00:00.000Z",
+      payloadJson: {},
+      metadataJson: {}
+    };
+    const store = {
+      listTasks: vi.fn(async () => []),
+      listTaskEvents: vi.fn(async () => []),
+      listAuditEventsAfter: vi.fn(async () => [auditEvent])
+    };
+    const service = new AnalyticsService({ store });
+
+    const events = await service.loadAuditEvents(10);
+
+    expect(events).toEqual([auditEvent]);
+    expect(store.listAuditEventsAfter).toHaveBeenCalledWith(10);
+    expect(store.listTasks).not.toHaveBeenCalled();
+    expect(store.listTaskEvents).not.toHaveBeenCalled();
+  });
+
+  it("falls back to per-task audit event loading for older sources", async () => {
+    const auditEvent: AuditEvent = {
+      id: 2,
+      streamType: "task",
+      streamId: "task-1",
+      eventType: "task.updated",
+      eventVersion: 2,
+      occurredAt: "2026-05-02T00:00:01.000Z",
+      payloadJson: {},
+      metadataJson: {}
+    };
+    const store = {
+      listTasks: vi.fn(async () => [
+        {
+          id: "task-1",
+          runs: [],
+          history: [],
+          artifacts: [],
+          runIds: [],
+          operatorAllowedActions: [],
+          title: "Task",
+          prompt: "Prompt",
+          status: "completed" as const,
+          workflowPhase: "completed" as const,
+          recoveryState: "healthy" as const,
+          latestEventId: 2,
+          latestProjectionVersion: 2,
+          createdAt: "2026-05-02T00:00:00.000Z",
+          updatedAt: "2026-05-02T00:00:01.000Z"
+        }
+      ]),
+      listTaskEvents: vi.fn(async () => [auditEvent])
+    };
+    const service = new AnalyticsService({ store });
+
+    const events = await service.loadAuditEvents(1);
+
+    expect(events).toEqual([auditEvent]);
+    expect(store.listTasks).toHaveBeenCalledTimes(1);
+    expect(store.listTaskEvents).toHaveBeenCalledWith("task-1");
+  });
+});

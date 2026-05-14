@@ -15,7 +15,8 @@ type AnalyticsEventStore = Pick<
   "append" | "loadAfter"
 >;
 
-type AnalyticsTaskSource = Pick<TaskStore, "listTasks" | "listTaskEvents">;
+type AnalyticsTaskSource = Pick<TaskStore, "listTasks" | "listTaskEvents"> &
+  Partial<Pick<TaskStore, "listAuditEventsAfter">>;
 
 const ZERO_TOKEN_USAGE: SystemTokenUsageSummary = {
   totalInputTokens: 0,
@@ -175,6 +176,10 @@ export class AnalyticsService implements MetricEventEmitter {
       return this.#eventStore.loadAfter(cursor) as Promise<AuditEvent[]>;
     }
 
+    if (this.#store.listAuditEventsAfter) {
+      return this.#store.listAuditEventsAfter(cursor);
+    }
+
     const tasks = await this.#store.listTasks();
     const events = await Promise.all(
       tasks.map((task) => this.#store.listTaskEvents(task.id))
@@ -210,4 +215,3 @@ export class AnalyticsService implements MetricEventEmitter {
     this.#snapshotVersion += appended.length;
   }
 }
-

@@ -15,10 +15,12 @@ import { registerMetricsRoutes } from "./routes/metrics";
 import { registerOperatorActionRoutes } from "./routes/operator-actions";
 import { registerPluginRoutes } from "./routes/plugins";
 import { registerReplayRoutes } from "./routes/replay";
+import { registerRoleRoutes } from "./routes/roles";
 import { registerTaskRoutes } from "./routes/tasks";
 import { registerTemplateRoutes } from "./routes/templates";
 import { AlertService } from "./services/alert-service";
 import { AnalyticsService } from "./services/analytics-service";
+import { MetricsService } from "./services/metrics-service";
 import type { OrchestratorService } from "./services/orchestrator-service";
 import type { PluginDiscovery } from "./services/plugin-discovery";
 import type { PluginExtensionCatalog } from "./services/plugin-extension-catalog";
@@ -30,6 +32,7 @@ export function createControlPlaneApp(options?: {
   service?: OrchestratorService;
   analyticsService?: AnalyticsService;
   alertService?: AlertService;
+  metricsService?: MetricsService;
   pluginStore?: PluginStore;
   pluginDiscovery?: PluginDiscovery;
   pluginExtensionCatalog?: PluginExtensionCatalog;
@@ -42,6 +45,8 @@ export function createControlPlaneApp(options?: {
       store: service,
       intervalMs: 10000
     });
+  const metricsService =
+    options?.metricsService ?? new MetricsService({ source: service });
   const alertRules = AlertService.loadRules();
   const alertService =
     options?.alertService ??
@@ -65,9 +70,10 @@ export function createControlPlaneApp(options?: {
   });
   registerOperatorActionRoutes(app, service);
   registerReplayRoutes(app, service);
-  registerMetricsRoutes(app);
+  registerMetricsRoutes(app, { metricsService });
   registerAnalyticsRoutes(app, { analyticsService });
   registerAlertRoutes(app, { alertService, rules: alertRules });
+  registerRoleRoutes(app);
 
   app.addHook("onReady", async () => {
     await service.rebuildProjectionsIfNeeded();

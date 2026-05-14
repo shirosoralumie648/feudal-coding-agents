@@ -1,5 +1,9 @@
 .worktrees/
+.claude/
+.claude-flow/
+.mcp.json
 node_modules/
 dist/
 playwright-report/
 apps/web/test-results/
+package-lock.json

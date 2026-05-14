@@ -78,7 +78,7 @@ async function createReadModel() {
   pools.push(pool);
   await runMigrations(pool);
   const eventStore = createPostgresEventStore({ pool });
-  return { pool, readModel: createTaskReadModel({ eventStore }) };
+  return { pool, eventStore, readModel: createTaskReadModel({ eventStore }) };
 }
 
 describe("task read model persistence projections", () => {
@@ -158,7 +158,26 @@ describe("task read model persistence projections", () => {
     });
   });
 
-  it("records operator actions for approval and rejection events", async () => {
+  it("keeps projection checkpoint stable after rebuild", async () => {
+    const { pool, eventStore, readModel } = await createReadModel();
+
+    await readModel.saveTask(task, "task.awaiting_approval", 0);
+
+    await pool.query("delete from tasks_current");
+    await pool.query("delete from task_history_entries");
+    await pool.query("delete from artifacts_current");
+    await pool.query("delete from projection_checkpoint");
+
+    await readModel.rebuildProjectionsIfNeeded();
+    const firstCheckpoint = await eventStore.readCheckpoint("tasks_current");
+    await readModel.rebuildProjectionsIfNeeded();
+    const secondCheckpoint = await eventStore.readCheckpoint("tasks_current");
+
+    expect(firstCheckpoint).toBeDefined();
+    expect(secondCheckpoint).toBe(firstCheckpoint);
+  });
+
+  it("does not persist governance approvals or rejections in operator_actions", async () => {
     const { pool, readModel } = await createReadModel();
 
     await readModel.saveTask(
@@ -197,13 +216,10 @@ describe("task read model persistence projections", () => {
       )
     ).rows;
 
-    expect(actionRows).toEqual([
-      { action_type: "approve", status: "applied" },
-      { action_type: "reject", status: "applied" }
-    ]);
+    expect(actionRows).toEqual([]);
   });
 
-  it("records revise operator actions and keeps governance data in rebuilt tasks", async () => {
+  it("keeps governance data in rebuilt tasks without storing revision actions in operator history", async () => {
     const { pool, readModel } = await createReadModel();
 
     await readModel.saveTask(
@@ -237,10 +253,7 @@ describe("task read model persistence projections", () => {
       )
     ).rows;
 
-    expect(actionRows).toContainEqual({
-      action_type: "revise",
-      status: "applied"
-    });
+    expect(actionRows).toEqual([]);
 
     await pool.query("delete from tasks_current");
     await pool.query("delete from task_history_entries");
@@ -282,6 +295,47 @@ describe("task read model persistence projections", () => {
         })
       })
     ]);
+  });
+
+  it("lists audit events after a cursor without non-task streams", async () => {
+    const { eventStore, readModel } = await createReadModel();
+    const secondTask = {
+      ...task,
+      id: "task-2",
+      title: "Build reports",
+      updatedAt: "2026-04-03T00:06:00.000Z"
+    };
+
+    await readModel.saveTask(task, "task.awaiting_approval", 0);
+    await eventStore.append({
+      streamType: "run",
+      streamId: "run-1",
+      expectedVersion: 0,
+      events: [
+        {
+          eventType: "run.created",
+          payloadJson: {},
+          metadataJson: {}
+        }
+      ]
+    });
+    await readModel.saveTask(secondTask, "task.awaiting_approval", 0);
+
+    const events = await readModel.listAuditEventsAfter(0);
+    const cursor = events[0]?.id ?? 0;
+    const afterCursor = await readModel.listAuditEventsAfter(cursor);
+
+    expect(events).toHaveLength(4);
+    expect(events.map((event) => event.streamType)).toEqual([
+      "task",
+      "task",
+      "task",
+      "task"
+    ]);
+    expect(events.map((event) => event.id)).toEqual(
+      [...events].map((event) => event.id).sort((left, right) => left - right)
+    );
+    expect(afterCursor.every((event) => event.id > cursor)).toBe(true);
   });
 
   it("persists explicit operator action records and returns them by task", async () => {
@@ -337,6 +391,14 @@ describe("task read model persistence projections", () => {
       expect.objectContaining({ actionType: "takeover", status: "requested" }),
       expect.objectContaining({ actionType: "takeover", status: "applied" })
     ]);
+  });
+
+  it("returns undefined for missing task event, run, and artifact reads", async () => {
+    const { readModel } = await createReadModel();
+
+    await expect(readModel.listTaskEvents("missing-task")).resolves.toBeUndefined();
+    await expect(readModel.listTaskRuns("missing-task")).resolves.toBeUndefined();
+    await expect(readModel.listTaskArtifacts("missing-task")).resolves.toBeUndefined();
   });
 
   it("summarizes operator-attention tasks from recovery and failed projections", async () => {
@@ -421,7 +483,26 @@ describe("task read model persistence projections", () => {
 
     await expect(readModel.getRecoverySummary()).resolves.toEqual({
       tasksNeedingRecovery: 1,
-      runsNeedingRecovery: 0
+      runsNeedingRecovery: 0,
+      taskBreakdown: {
+        healthy: 0,
+        replaying: 0,
+        recoveryRequired: 1
+      },
+      runRecoveryBreakdown: {
+        healthy: 1,
+        replaying: 0,
+        recoveryRequired: 0
+      },
+      runStatusBreakdown: {
+        created: 0,
+        inProgress: 0,
+        awaiting: 0,
+        completed: 1,
+        failed: 0,
+        cancelling: 0,
+        cancelled: 0
+      }
     });
   });
 
@@ -453,6 +534,120 @@ describe("task read model persistence projections", () => {
     await expect(readModel.getTask(task.id)).resolves.toMatchObject({
       recoveryState: "recovery_required",
       operatorAllowedActions: ["recover", "takeover", "abandon"]
+    });
+  });
+
+  it("reports layered task and run recovery breakdowns", async () => {
+    const { pool, readModel } = await createReadModel();
+
+    await readModel.saveTask(task, "task.awaiting_approval", 0);
+    await readModel.saveTask(
+      {
+        ...task,
+        id: "task-recovery-required",
+        status: "executing",
+        runs: [],
+        runIds: [],
+        approvalRunId: undefined,
+        approvalRequest: undefined,
+        updatedAt: "2026-04-03T00:30:00.000Z"
+      },
+      "task.executing",
+      0
+    );
+
+    await pool.query(
+      `update tasks_current
+          set recovery_state = 'recovery_required',
+              recovery_reason = 'Recovered executing task requires operator review'
+        where id = 'task-recovery-required'`
+    );
+
+    await pool.query(
+      `insert into runs_current (
+         id, task_id, agent, status, phase, recovery_state, recovery_reason,
+         last_recovered_at, latest_event_id, latest_projection_version, payload_json, updated_at
+       ) values
+       (
+         'run-created',
+         'task-1',
+         'gongbu-executor',
+         'created',
+         'execution',
+         'recovery_required',
+         'Recovered created run requires operator review',
+         '2026-04-03T00:31:00.000Z',
+         10,
+         1,
+         '{"id":"run-created","taskId":"task-1","agent":"gongbu-executor","status":"created","phase":"execution","messages":[],"artifacts":[]}'::jsonb,
+         '2026-04-03T00:31:00.000Z'
+       ),
+       (
+         'run-in-progress',
+         'task-1',
+         'gongbu-executor',
+         'in-progress',
+         'execution',
+         'recovery_required',
+         'Recovered in-progress run requires operator review',
+         '2026-04-03T00:31:00.000Z',
+         11,
+         1,
+         '{"id":"run-in-progress","taskId":"task-1","agent":"gongbu-executor","status":"in-progress","phase":"execution","messages":[],"artifacts":[]}'::jsonb,
+         '2026-04-03T00:31:00.000Z'
+       ),
+       (
+         'run-cancelling',
+         'task-1',
+         'gongbu-executor',
+         'cancelling',
+         'execution',
+         'recovery_required',
+         'Recovered cancelling run requires operator review',
+         '2026-04-03T00:31:00.000Z',
+         12,
+         1,
+         '{"id":"run-cancelling","taskId":"task-1","agent":"gongbu-executor","status":"cancelling","phase":"execution","messages":[],"artifacts":[]}'::jsonb,
+         '2026-04-03T00:31:00.000Z'
+       ),
+       (
+         'run-cancelled',
+         'task-1',
+         'gongbu-executor',
+         'cancelled',
+         'execution',
+         'healthy',
+         null,
+         '2026-04-03T00:31:00.000Z',
+         13,
+         1,
+         '{"id":"run-cancelled","taskId":"task-1","agent":"gongbu-executor","status":"cancelled","phase":"execution","messages":[],"artifacts":[]}'::jsonb,
+         '2026-04-03T00:31:00.000Z'
+       )`
+    );
+
+    await expect(readModel.getRecoverySummary()).resolves.toEqual({
+      tasksNeedingRecovery: 1,
+      runsNeedingRecovery: 3,
+      taskBreakdown: {
+        healthy: 1,
+        replaying: 0,
+        recoveryRequired: 1
+      },
+      runRecoveryBreakdown: {
+        healthy: 1,
+        replaying: 0,
+        recoveryRequired: 3
+      },
+      runStatusBreakdown: {
+        created: 1,
+        inProgress: 1,
+        awaiting: 0,
+        completed: 0,
+        failed: 0,
+        cancelling: 1,
+        cancelled: 1
+      }
     });
   });
 

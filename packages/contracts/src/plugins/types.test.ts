@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  PluginCompatibilityReviewSchema,
+  PluginMarketplaceEntrySchema,
   PLUGIN_LIFECYCLE_STATES,
+  PluginPermissionSchema,
+  PluginSecurityReviewSchema,
   PluginLifecycleStateSchema,
   PluginManifestSchema,
+  defineAcpWorkerExtension,
   definePluginManifest,
+  definePluginPermission,
+  defineWorkflowStepProviderExtension,
+  evaluatePluginCompatibility,
   validatePluginManifest,
   type PluginManifest
 } from "./index";
@@ -18,7 +26,11 @@ const baseManifest = {
   },
   compatibility: {
     app: "feudal-coding-agents"
-  }
+  },
+  security: {
+    permissions: []
+  },
+  metadata: {}
 } satisfies Omit<PluginManifest, "extensionPoints">;
 
 describe("plugin contracts", () => {
@@ -39,6 +51,7 @@ describe("plugin contracts", () => {
 
     expect(manifest.extensionPoints[0]?.type).toBe("acp-worker");
     expect(manifest.enabledByDefault).toBe(false);
+    expect(manifest.security.permissions).toEqual([]);
   });
 
   it("parses a valid manifest with a workflow-step-provider extension", () => {
@@ -136,5 +149,113 @@ describe("plugin contracts", () => {
     expect(definePluginManifest(manifest).id).toBe("local.agent-plugin");
     expect(validatePluginManifest(manifest).success).toBe(true);
   });
-});
 
+  it("parses plugin security permissions and shared ecosystem review shapes", () => {
+    const permission = PluginPermissionSchema.parse({
+      type: "process",
+      access: "execute",
+      target: "codex",
+      justification: "Run a local code review worker"
+    });
+    const manifest = PluginManifestSchema.parse({
+      ...baseManifest,
+      extensionPoints: [
+        {
+          type: "acp-worker",
+          id: "local.agent-plugin.worker",
+          workerName: "local-worker",
+          displayName: "Local Worker",
+          capabilities: ["assignment"],
+          artifactName: "assignment.json"
+        }
+      ],
+      security: {
+        permissions: [permission]
+      }
+    });
+    const review = PluginSecurityReviewSchema.parse({
+      pluginId: manifest.id,
+      riskLevel: "high",
+      approvalRequired: true,
+      permissions: manifest.security.permissions,
+      findings: [
+        {
+          code: "PLUGIN_PERMISSION_PROCESS",
+          message: "Process execution requires admin approval",
+          severity: "error"
+        }
+      ],
+      recommendations: ["Review the plugin entry module before enabling"],
+      reviewedAt: "2026-05-04T00:00:00.000Z"
+    });
+    const compatibility = PluginCompatibilityReviewSchema.parse({
+      status: "compatible",
+      app: "feudal-coding-agents",
+      currentVersion: "1.0.0",
+      reason: "Manifest targets this app"
+    });
+    const entry = PluginMarketplaceEntrySchema.parse({
+      pluginId: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      state: "available",
+      sourceKind: "local-directory",
+      extensionTypes: ["acp-worker"],
+      compatibility,
+      security: review
+    });
+
+    expect(entry.security.riskLevel).toBe("high");
+    expect(entry.compatibility.status).toBe("compatible");
+  });
+
+  it("builds extension declarations, permissions, and compatibility reviews through SDK helpers", () => {
+    const worker = defineAcpWorkerExtension({
+      type: "acp-worker",
+      id: "local.sdk-plugin.worker",
+      workerName: "sdk-worker",
+      displayName: "SDK Worker",
+      capabilities: ["sdk-example"],
+      artifactName: "sdk-output.json"
+    });
+    const provider = defineWorkflowStepProviderExtension({
+      type: "workflow-step-provider",
+      id: "local.sdk-plugin.provider",
+      providerId: "sdk-provider",
+      stepTypes: ["sdk-step"],
+      description: "Adds SDK workflow steps."
+    });
+    const permission = definePluginPermission({
+      type: "filesystem",
+      access: "read",
+      target: "repo",
+      justification: "Read repository files for analysis"
+    });
+    const manifest = definePluginManifest({
+      ...baseManifest,
+      id: "local.sdk-plugin",
+      extensionPoints: [worker, provider],
+      security: {
+        permissions: [permission]
+      }
+    });
+
+    const compatible = evaluatePluginCompatibility(manifest, {
+      appVersion: "1.2.0"
+    });
+    const incompatible = evaluatePluginCompatibility(
+      {
+        ...manifest,
+        compatibility: {
+          app: "feudal-coding-agents",
+          minVersion: "2.0.0"
+        }
+      },
+      { appVersion: "1.2.0" }
+    );
+
+    expect(manifest.extensionPoints).toHaveLength(2);
+    expect(compatible.status).toBe("compatible");
+    expect(incompatible.status).toBe("incompatible");
+  });
+});

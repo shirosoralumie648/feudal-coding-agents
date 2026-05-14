@@ -8,6 +8,17 @@ describe("mock ACP client", () => {
 
     expect(manifests.map((item) => item.name)).toContain("intake-agent");
     expect(manifests.map((item) => item.name)).toContain("gongbu-executor");
+    expect(manifests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "fact-checker-agent",
+          displayName: "Fact Checker",
+          narrativeAlias: "采风司",
+          capabilityGroup: "analysis",
+          enabledByDefault: false
+        })
+      ])
+    );
   });
 
   it("supports await and resume for approval checkpoints", async () => {

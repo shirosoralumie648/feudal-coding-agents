@@ -112,9 +112,12 @@ function evaluateCondition(
   if (sourceOutput === undefined || sourceOutput === null) {
     return false;
   }
+  if (typeof sourceOutput !== "object" || Array.isArray(sourceOutput)) {
+    return false;
+  }
 
   // Navigate dot-separated path
-  const actualValue = resolvePath(sourceOutput, condition.path);
+  const actualValue = resolvePath(sourceOutput as Record<string, unknown>, condition.path);
   if (actualValue === undefined) {
     return false;
   }

@@ -1,5 +1,9 @@
 import type { OperatorActionRecord, TaskStatus } from "@feudal/contracts";
 import type { TaskConsoleRecord } from "../lib/api";
+import {
+  getNextWorkflowPhaseLabel,
+  getTaskWorkflowPhaseLabel
+} from "../lib/workflow-phase";
 import { GovernancePanel } from "./governance-panel";
 import { OperatorConsolePanel } from "./operator-console-panel";
 import { RevisionPanel } from "./revision-panel";
@@ -21,6 +25,7 @@ function formatArtifact(content: unknown): string {
 interface TaskDetailPanelProps {
   laneLabels: Record<TaskStatus, string>;
   operatorActions: OperatorActionRecord[];
+  operatorError?: string;
   operatorNote: string;
   operatorPending: boolean;
   onOperatorNoteChange: (value: string) => void;
@@ -29,6 +34,7 @@ interface TaskDetailPanelProps {
   onAbandon: () => void | Promise<void>;
   onRevisionNoteChange: (value: string) => void;
   onSubmitRevision: () => void | Promise<void>;
+  revisionError?: string;
   revisionNote: string;
   revisionPending: boolean;
   selectedTask: TaskConsoleRecord | null;
@@ -38,6 +44,7 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
   const {
     laneLabels,
     operatorActions,
+    operatorError,
     operatorNote,
     operatorPending,
     onOperatorNoteChange,
@@ -46,10 +53,17 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
     onAbandon,
     onRevisionNoteChange,
     onSubmitRevision,
+    revisionError,
     revisionNote,
     revisionPending,
     selectedTask
   } = props;
+  const workflowPhaseLabel = selectedTask
+    ? getTaskWorkflowPhaseLabel(selectedTask)
+    : undefined;
+  const nextWorkflowPhaseLabel = selectedTask
+    ? getNextWorkflowPhaseLabel(selectedTask)
+    : undefined;
 
   return (
     <section className="panel panel-detail">
@@ -66,6 +80,20 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
             <div className="task-summary-meta">
               <span>{selectedTask.runs.length} ACP runs</span>
               <span>{selectedTask.artifacts.length} artifacts</span>
+            </div>
+            <div className="task-summary-meta">
+              <span>{`Workflow Phase`}</span>
+              <strong>{workflowPhaseLabel}</strong>
+              {nextWorkflowPhaseLabel ? (
+                <span>{`Next: ${nextWorkflowPhaseLabel}`}</span>
+              ) : null}
+            </div>
+            <div className="task-summary-meta">
+              <span>Recovery State</span>
+              <strong>{selectedTask.recoveryState ?? "healthy"}</strong>
+              {selectedTask.recoveryReason ? (
+                <span>{selectedTask.recoveryReason}</span>
+              ) : null}
             </div>
           </article>
 
@@ -97,6 +125,7 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
           <GovernancePanel task={selectedTask} />
           <OperatorConsolePanel
             actions={operatorActions}
+            error={operatorError}
             isSubmitting={operatorPending}
             note={operatorNote}
             onAbandon={onAbandon}
@@ -106,6 +135,7 @@ export function TaskDetailPanel(props: TaskDetailPanelProps) {
             task={selectedTask}
           />
           <RevisionPanel
+            error={revisionError}
             isSubmitting={revisionPending}
             note={revisionNote}
             onNoteChange={onRevisionNoteChange}

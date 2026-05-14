@@ -17,6 +17,11 @@ export interface ACPAgentManifest {
   role: string;
   description: string;
   capabilities: string[];
+  displayName?: string;
+  narrativeAlias?: string;
+  capabilityGroup?: string;
+  required?: boolean;
+  enabledByDefault?: boolean;
 }
 
 export type ACPRunStatus =

@@ -4,6 +4,7 @@ type InlineGovernanceAction = "approve" | "reject";
 
 interface ApprovalInboxPanelProps {
   activeTaskId?: string;
+  errorByTaskId?: Record<string, string | undefined>;
   onGovernanceAction: (
     taskId: string,
     action: InlineGovernanceAction
@@ -49,7 +50,7 @@ function hasGovernanceDrift(
 }
 
 export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
-  const { activeTaskId, onGovernanceAction, tasks } = props;
+  const { activeTaskId, errorByTaskId, onGovernanceAction, tasks } = props;
 
   return (
     <section className="panel panel-approval">
@@ -80,6 +81,7 @@ export function ApprovalInboxPanel(props: ApprovalInboxPanelProps) {
                 {actionStateDrifted ? (
                   <small>Governance action state is out of sync.</small>
                 ) : null}
+                {errorByTaskId?.[task.id] ? <small>{errorByTaskId[task.id]}</small> : null}
               </div>
               <div className="button-row">
                 {actionStateDrifted

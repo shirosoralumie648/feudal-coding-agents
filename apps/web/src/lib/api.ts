@@ -7,8 +7,14 @@ import type {
   MetricSnapshot,
   OperatorActionRecord,
   OperatorActionSummary,
-  TaskRecord
+  PluginDiagnostic,
+  PluginMarketplaceEntry,
+  RecoverySummary,
+  TaskRecord,
+  TaskProjection
 } from "@feudal/contracts";
+
+export type { RecoverySummary };
 
 export interface CreateTaskInput {
   title: string;
@@ -18,13 +24,7 @@ export interface CreateTaskInput {
   sensitivity: "low" | "medium" | "high";
 }
 
-export type TaskConsoleRecord = TaskRecord & {
-  recoveryState?: string;
-  recoveryReason?: string;
-  lastRecoveredAt?: string;
-  latestEventId?: number;
-  latestProjectionVersion?: number;
-};
+export type TaskConsoleRecord = TaskProjection;
 
 export interface TaskEventSummary {
   id: number;
@@ -36,11 +36,6 @@ export interface TaskDiffEntry {
   id: number;
   changedPaths: string[];
   afterSubsetJson: Record<string, unknown>;
-}
-
-export interface RecoverySummary {
-  tasksNeedingRecovery: number;
-  runsNeedingRecovery: number;
 }
 
 interface TaskDiffApiRecord {
@@ -57,7 +52,20 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
 
   if (!response.ok) {
-    throw new Error(`Request failed for ${path}`);
+    const message = await response
+      .clone()
+      .json()
+      .then((payload) =>
+        payload && typeof payload === "object" && "message" in payload
+          ? String((payload as { message: unknown }).message)
+          : undefined
+      )
+      .catch(async () => {
+        const text = await response.text().catch(() => "");
+        return text.trim().length > 0 ? text : undefined;
+      });
+
+    throw new Error(message ?? `Request failed for ${path}`);
   }
 
   return response.json() as Promise<T>;
@@ -248,4 +256,17 @@ export async function fetchAlertStates() {
 
 export async function fetchPendingAlerts() {
   return requestJson<{ alerts: AlertEvent[] }>("/api/alerts/pending");
+}
+
+export interface PluginMarketplaceSnapshot {
+  entries: PluginMarketplaceEntry[];
+  failed: Array<{
+    pluginId?: string;
+    manifestPath?: string;
+    diagnostic: PluginDiagnostic;
+  }>;
+}
+
+export async function fetchPluginMarketplace() {
+  return requestJson<PluginMarketplaceSnapshot>("/api/plugins/marketplace");
 }

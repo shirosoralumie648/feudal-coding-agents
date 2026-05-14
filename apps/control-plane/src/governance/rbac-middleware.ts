@@ -333,6 +333,7 @@ export function registerPermissionCheckDecorator(app: FastifyInstance): void {
 declare module "fastify" {
   interface FastifyRequest {
     checkPermission(permission: Permission): PermissionCheckResult;
+    context?: Record<string, unknown>;
     permissionCheck?: PermissionCheckResult;
   }
 }

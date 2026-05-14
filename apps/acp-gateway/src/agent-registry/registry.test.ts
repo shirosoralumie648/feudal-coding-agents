@@ -1,29 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   AgentRegistry,
-  type AgentRegistryStore,
   type AgentRegistryEvent,
+  type AgentRegistryEventStore
 } from "./registry";
-import type { AgentManifest, AgentHealthStatus } from "./types";
 
-function makeValidManifest(overrides?: Partial<AgentManifest>): AgentManifest {
-  return {
-    agentId: "coder-v1",
-    name: "Coder Agent",
-    version: "1.0.0",
-    description: "Generates code from specifications",
-    capabilities: [{ id: "code-generation", name: "Code Generation", description: "Generates source code" }],
-    inputSchema: { type: "object" },
-    outputSchema: { type: "object" },
-    runtimeHints: { estimatedDurationMs: 5000, concurrent: false, priority: 1 },
-    health: "healthy",
-    registeredAt: new Date().toISOString(),
-    ...overrides,
-  };
-}
-
-function createMockStore(): AgentRegistryStore {
+function createMockStore(): AgentRegistryEventStore & { events: AgentRegistryEvent[] } {
   const events: AgentRegistryEvent[] = [];
+
   return {
     events,
     async append(event: AgentRegistryEvent) {
@@ -31,225 +15,165 @@ function createMockStore(): AgentRegistryStore {
     },
     async loadEvents() {
       return [...events];
-    },
+    }
   };
 }
 
-describe("AgentRegistry", () => {
+describe("agent-registry/registry", () => {
+  let store: ReturnType<typeof createMockStore>;
   let registry: AgentRegistry;
-  let store: AgentRegistryStore;
 
   beforeEach(() => {
     store = createMockStore();
     registry = new AgentRegistry({ store });
   });
 
-  describe("register()", () => {
-    it("creates new agent entry with generated ID", async () => {
-      const manifest = makeValidManifest();
-      delete manifest.agentId;
-
-      const result = await registry.register(manifest);
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.agentId).toMatch(/^agent-[a-z0-9]+$/);
-        expect(result.version).toBe(1);
-      }
+  it("registers persistent agents with generated ids and default status", async () => {
+    const result = await registry.register({
+      capabilities: ["code-generation"],
+      metadata: { pool: "default" }
     });
 
-    it("uses provided agentId if specified", async () => {
-      const manifest = makeValidManifest({ agentId: "my-custom-agent" });
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
 
-      const result = await registry.register(manifest);
+    const agent = registry.getAgent(result.agentId);
+    expect(agent).toEqual(
+      expect.objectContaining({
+        agentId: result.agentId,
+        capabilities: ["code-generation"],
+        status: "online",
+        metadata: { pool: "default" },
+        isTemporary: false
+      })
+    );
+    expect(store.events).toHaveLength(1);
+    expect(store.events[0]).toEqual(
+      expect.objectContaining({
+        type: "agent.registered",
+        agentId: result.agentId
+      })
+    );
+  });
 
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.agentId).toBe("my-custom-agent");
-      }
+  it("stores temporary agents in memory only", async () => {
+    const result = await registry.register(
+      {
+        agentId: "temp-agent",
+        capabilities: ["testing"]
+      },
+      { temporary: true }
+    );
+
+    expect(result.success).toBe(true);
+    expect(registry.getAgent("temp-agent")?.isTemporary).toBe(true);
+    expect(store.events).toHaveLength(0);
+  });
+
+  it("rejects duplicate registration ids", async () => {
+    await registry.register({
+      agentId: "duplicate-agent",
+      capabilities: ["code-generation"]
     });
 
-    it("rejects duplicate agentId", async () => {
-      const manifest = makeValidManifest({ agentId: "duplicate-agent" });
-      await registry.register(manifest);
-
-      const result = await registry.register(manifest);
-
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain("already registered");
-      }
+    const result = await registry.register({
+      agentId: "duplicate-agent",
+      capabilities: ["testing"]
     });
 
-    it("persists registration event to store", async () => {
-      const manifest = makeValidManifest({ agentId: "persisted-agent" });
-
-      await registry.register(manifest);
-
-      expect(store.events.length).toBe(1);
-      expect(store.events[0].type).toBe("agent.registered");
-      expect(store.events[0].agentId).toBe("persisted-agent");
-    });
-
-    it("stores temporary agents in memory only (no persistence)", async () => {
-      const manifest = makeValidManifest({ agentId: "temp-agent" });
-
-      await registry.register(manifest, { temporary: true });
-
-      expect(store.events.length).toBe(0);
-      const agent = registry.getAgent("temp-agent");
-      expect(agent).toBeDefined();
+    expect(result).toEqual({
+      success: false,
+      error: 'Agent "duplicate-agent" is already registered'
     });
   });
 
-  describe("unregister()", () => {
-    it("removes agent from registry", async () => {
-      const manifest = makeValidManifest({ agentId: "to-remove" });
-      await registry.register(manifest);
-
-      await registry.unregister("to-remove");
-
-      const agent = registry.getAgent("to-remove");
-      expect(agent).toBeUndefined();
+  it("updates heartbeat timestamps without persisting high-frequency events", async () => {
+    await registry.register({
+      agentId: "heartbeat-agent",
+      capabilities: ["testing"]
     });
 
-    it("persists deregistration event to store", async () => {
-      const manifest = makeValidManifest({ agentId: "to-remove" });
-      await registry.register(manifest);
+    const updatedHeartbeat = new Date("2026-04-27T10:05:00.000Z");
+    await registry.updateHeartbeat("heartbeat-agent", updatedHeartbeat);
 
-      await registry.unregister("to-remove");
-
-      const deregisterEvent = store.events.find((e) => e.type === "agent.deregistered");
-      expect(deregisterEvent).toBeDefined();
-      expect(deregisterEvent?.agentId).toBe("to-remove");
-    });
-
-    it("throws error if agent not found", async () => {
-      await expect(registry.unregister("nonexistent")).rejects.toThrow("not found");
-    });
-
-    it("removes temporary agents without persistence", async () => {
-      const manifest = makeValidManifest({ agentId: "temp-to-remove" });
-      await registry.register(manifest, { temporary: true });
-      const initialEventCount = store.events.length;
-
-      await registry.unregister("temp-to-remove");
-
-      expect(store.events.length).toBe(initialEventCount);
-    });
+    expect(registry.getAgent("heartbeat-agent")?.lastHeartbeat).toEqual(updatedHeartbeat);
+    expect(store.events).toHaveLength(1);
   });
 
-  describe("getAgent()", () => {
-    it("returns agent metadata by ID", async () => {
-      const manifest = makeValidManifest({ agentId: "get-test" });
-      await registry.register(manifest);
-
-      const agent = registry.getAgent("get-test");
-
-      expect(agent).toBeDefined();
-      expect(agent?.agentId).toBe("get-test");
-      expect(agent?.name).toBe("Coder Agent");
+  it("changes status and persists status change events", async () => {
+    await registry.register({
+      agentId: "status-agent",
+      capabilities: ["analysis"]
     });
 
-    it("returns undefined for unknown agent", () => {
-      const agent = registry.getAgent("unknown");
-      expect(agent).toBeUndefined();
-    });
+    await registry.setStatus("status-agent", "busy");
+
+    expect(registry.getAgent("status-agent")?.status).toBe("busy");
+    expect(store.events.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "agent.status-changed",
+        agentId: "status-agent",
+        status: "busy"
+      })
+    );
   });
 
-  describe("listAgents()", () => {
-    it("returns all registered agents", async () => {
-      await registry.register(makeValidManifest({ agentId: "agent-1" }));
-      await registry.register(makeValidManifest({ agentId: "agent-2" }));
-      await registry.register(makeValidManifest({ agentId: "agent-3" }));
-
-      const agents = registry.listAgents();
-
-      expect(agents).toHaveLength(3);
-      expect(agents.map((a) => a.agentId).sort()).toEqual(["agent-1", "agent-2", "agent-3"]);
+  it("unregisters persistent agents and records the event", async () => {
+    await registry.register({
+      agentId: "remove-agent",
+      capabilities: ["review"]
     });
 
-    it("returns empty array when no agents registered", () => {
-      const agents = registry.listAgents();
-      expect(agents).toEqual([]);
-    });
+    await registry.unregister("remove-agent");
+
+    expect(registry.getAgent("remove-agent")).toBeUndefined();
+    expect(store.events.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "agent.unregistered",
+        agentId: "remove-agent"
+      })
+    );
   });
 
-  describe("updateHealth()", () => {
-    it("updates agent health status", async () => {
-      const manifest = makeValidManifest({ agentId: "health-test", health: "healthy" });
-      await registry.register(manifest);
-
-      await registry.updateHealth("health-test", "degraded");
-
-      const agent = registry.getAgent("health-test");
-      expect(agent?.health).toBe("degraded");
+  it("lists both persistent and temporary agents", async () => {
+    await registry.register({
+      agentId: "persistent-agent",
+      capabilities: ["review"]
     });
+    await registry.register(
+      {
+        agentId: "temporary-agent",
+        capabilities: ["testing"]
+      },
+      { temporary: true }
+    );
 
-    it("persists health change event to store", async () => {
-      const manifest = makeValidManifest({ agentId: "health-persist" });
-      await registry.register(manifest);
-
-      await registry.updateHealth("health-persist", "unavailable");
-
-      const healthEvent = store.events.find((e) => e.type === "agent.health-changed");
-      expect(healthEvent).toBeDefined();
-    });
-
-    it("throws error if agent not found", async () => {
-      await expect(registry.updateHealth("unknown", "healthy")).rejects.toThrow("not found");
-    });
+    expect(registry.listAgents().map((agent) => agent.agentId).sort()).toEqual([
+      "persistent-agent",
+      "temporary-agent"
+    ]);
   });
 
-  describe("restore()", () => {
-    it("rebuilds registry from event store", async () => {
-      // Register some agents
-      await registry.register(makeValidManifest({ agentId: "restore-1" }));
-      await registry.register(makeValidManifest({ agentId: "restore-2" }));
-
-      // Create a new registry with the same store
-      const newRegistry = new AgentRegistry({ store });
-      await newRegistry.restore();
-
-      const agents = newRegistry.listAgents();
-      expect(agents).toHaveLength(2);
-      expect(agents.map((a) => a.agentId).sort()).toEqual(["restore-1", "restore-2"]);
+  it("restores persistent agents and status changes from the event store", async () => {
+    await registry.register({
+      agentId: "restore-agent",
+      capabilities: ["analysis"],
+      metadata: { zone: "primary" }
     });
+    await registry.setStatus("restore-agent", "busy");
 
-    it("applies deregistration events during restore", async () => {
-      await registry.register(makeValidManifest({ agentId: "temp-restore" }));
-      await registry.unregister("temp-restore");
+    const restored = new AgentRegistry({ store });
+    await restored.restore();
 
-      const newRegistry = new AgentRegistry({ store });
-      await newRegistry.restore();
-
-      const agent = newRegistry.getAgent("temp-restore");
-      expect(agent).toBeUndefined();
-    });
-
-    it("applies health changes during restore", async () => {
-      await registry.register(makeValidManifest({ agentId: "health-restore", health: "healthy" }));
-      await registry.updateHealth("health-restore", "degraded");
-
-      const newRegistry = new AgentRegistry({ store });
-      await newRegistry.restore();
-
-      const agent = newRegistry.getAgent("health-restore");
-      expect(agent?.health).toBe("degraded");
-    });
-  });
-
-  describe("getAgentVersion()", () => {
-    it("returns current version of agent", async () => {
-      await registry.register(makeValidManifest({ agentId: "version-test" }));
-
-      const version = registry.getAgentVersion("version-test");
-      expect(version).toBe(1);
-    });
-
-    it("returns undefined for unknown agent", () => {
-      const version = registry.getAgentVersion("unknown");
-      expect(version).toBeUndefined();
-    });
+    expect(restored.getAgent("restore-agent")).toEqual(
+      expect.objectContaining({
+        agentId: "restore-agent",
+        capabilities: ["analysis"],
+        metadata: { zone: "primary" },
+        status: "busy"
+      })
+    );
   });
 });

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchPluginMarketplace,
   approveTask,
   abandonTask,
   fetchOperatorSummary,
+  fetchTasks,
   fetchTaskDiffs,
   fetchTaskOperatorActions,
   rejectTask,
@@ -54,6 +56,65 @@ describe("fetchTaskDiffs", () => {
       }
     ]);
     expect(fetchMock).toHaveBeenCalledWith("/api/tasks/task-1/diffs", undefined);
+  });
+});
+
+describe("plugin ecosystem api helpers", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("loads the local plugin marketplace snapshot", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          entries: [
+            {
+              pluginId: "local.agent-plugin",
+              name: "Local Agent Plugin",
+              version: "1.0.0",
+              state: "enabled",
+              sourceKind: "inline",
+              extensionTypes: ["acp-worker"],
+              compatibility: {
+                status: "compatible",
+                app: "feudal-coding-agents",
+                currentVersion: "1.0.0",
+                reason: "Manifest targets this app"
+              },
+              security: {
+                pluginId: "local.agent-plugin",
+                riskLevel: "low",
+                approvalRequired: false,
+                permissions: [],
+                findings: [],
+                recommendations: [],
+                reviewedAt: "2026-05-04T00:00:00.000Z"
+              }
+            }
+          ],
+          failed: []
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      )
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchPluginMarketplace()).resolves.toMatchObject({
+      entries: [{ pluginId: "local.agent-plugin", security: { riskLevel: "low" } }]
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/plugins/marketplace",
+      undefined
+    );
   });
 });
 
@@ -344,6 +405,32 @@ describe("operator action api helpers", () => {
       2,
       "/api/operator-actions/summary",
       undefined
+    );
+  });
+});
+
+describe("api error handling", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves backend message payloads for failed requests", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "Task task-1 does not allow operator action recover" }), {
+          status: 409,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    );
+
+    await expect(fetchTasks()).rejects.toThrow(
+      "Task task-1 does not allow operator action recover"
     );
   });
 });

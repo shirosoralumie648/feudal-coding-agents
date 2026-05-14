@@ -71,7 +71,7 @@ export interface RoleHierarchyCache {
  * Builds parent-child mappings from a flat list of roles.
  */
 export class InMemoryRoleHierarchyCache implements RoleHierarchyCache {
-  private parentMap: Map<string, string[]> = new Map();
+  private parentByRole: Map<string, string> = new Map();
   private ancestorCache: Map<string, string[]> = new Map();
 
   constructor(roles: Role[]) {
@@ -79,12 +79,9 @@ export class InMemoryRoleHierarchyCache implements RoleHierarchyCache {
   }
 
   private buildHierarchy(roles: Role[]): void {
-    // Build parent map
     for (const role of roles) {
       if (role.parentRoleId) {
-        const children = this.parentMap.get(role.parentRoleId) ?? [];
-        children.push(role.id);
-        this.parentMap.set(role.parentRoleId, children);
+        this.parentByRole.set(role.id, role.parentRoleId);
       }
     }
 
@@ -112,15 +109,12 @@ export class InMemoryRoleHierarchyCache implements RoleHierarchyCache {
   }
 
   private getParentRoleId(roleId: string): string | undefined {
-    // This would need to be populated from the actual role data
-    // For now, we'll get it from the ancestor cache
-    const ancestors = this.ancestorCache.get(roleId);
-    return ancestors?.[0];
+    return this.parentByRole.get(roleId);
   }
 
-  getParentRoles(_roleId: string): string[] {
-    // Return immediate parents - would need role data to implement
-    return [];
+  getParentRoles(roleId: string): string[] {
+    const parentRoleId = this.parentByRole.get(roleId);
+    return parentRoleId ? [parentRoleId] : [];
   }
 
   getAllAncestors(roleId: string): string[] {
@@ -208,9 +202,8 @@ export function checkPermission(
     // Check direct permissions
     for (const rolePerm of role.permissions) {
       if (
-        rolePerm.resource === permission.resource &&
-        (rolePerm.action === permission.action ||
-          rolePerm.action === "admin")
+        resourceMatches(rolePerm.resource, permission.resource) &&
+        actionMatches(rolePerm.action, permission.action)
       ) {
         // Evaluate conditions if present
         if (
@@ -218,7 +211,7 @@ export function checkPermission(
           rolePerm.conditions.length > 0 &&
           options?.context
         ) {
-          const conditionsMet = rolePerm.conditions.every((condition) =>
+          const conditionsMet = rolePerm.conditions.every((condition: PermissionCondition) =>
             evaluateCondition(condition, options.context!)
           );
           if (!conditionsMet) {
@@ -257,6 +250,20 @@ export function checkPermission(
     },
     checkedAt
   };
+}
+
+function resourceMatches(
+  roleResource: string,
+  requestedResource: string
+): boolean {
+  return roleResource === requestedResource || roleResource === "*";
+}
+
+function actionMatches(
+  roleAction: Permission["action"],
+  requestedAction: Permission["action"]
+): boolean {
+  return roleAction === requestedAction || roleAction === "admin";
 }
 
 /**

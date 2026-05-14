@@ -9,9 +9,11 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@feudal/contracts": path.resolve(__dirname, "../../../packages/contracts/src/index.ts"),
-      "@feudal/orchestrator": path.resolve(__dirname, "../../../packages/orchestrator/src/task-machine.ts"),
-      "@feudal/acp": path.resolve(__dirname, "../../../packages/acp/src/index.ts")
+      "@feudal/contracts": path.resolve(__dirname, "../../packages/contracts/src/index.ts"),
+      "@feudal/orchestrator": path.resolve(__dirname, "../../packages/orchestrator/src/task-machine.ts"),
+      "@feudal/acp/http-client": path.resolve(__dirname, "../../packages/acp/src/http-client.ts"),
+      "@feudal/acp/mock-client": path.resolve(__dirname, "../../packages/acp/src/mock-client.ts"),
+      "@feudal/acp": path.resolve(__dirname, "../../packages/acp/src/index.ts")
     }
   }
 });

@@ -63,6 +63,7 @@ export interface TaskStore {
   listOperatorActions(taskId: string): Promise<OperatorActionRecord[] | undefined>;
   getOperatorActionSummary(): Promise<OperatorActionSummary>;
   listTaskEvents(taskId: string): Promise<AuditEvent[] | undefined>;
+  listAuditEventsAfter(cursor?: number): Promise<AuditEvent[]>;
   listTaskDiffs(taskId: string): Promise<AuditEvent[] | undefined>;
   listTaskRuns(taskId: string): Promise<ACPRunSummary[] | undefined>;
   listTaskArtifacts(taskId: string): Promise<TaskArtifact[] | undefined>;
@@ -73,6 +74,25 @@ export interface TaskStore {
   getRecoverySummary(): Promise<{
     tasksNeedingRecovery: number;
     runsNeedingRecovery: number;
+    taskBreakdown: {
+      healthy: number;
+      replaying: number;
+      recoveryRequired: number;
+    };
+    runRecoveryBreakdown: {
+      healthy: number;
+      replaying: number;
+      recoveryRequired: number;
+    };
+    runStatusBreakdown: {
+      created: number;
+      inProgress: number;
+      awaiting: number;
+      completed: number;
+      failed: number;
+      cancelling: number;
+      cancelled: number;
+    };
   }>;
   rebuildProjectionsIfNeeded(): Promise<void>;
 }
@@ -237,6 +257,13 @@ export class MemoryTaskStore implements TaskStore {
     return [...(this.events.get(taskId) ?? [])];
   }
 
+  async listAuditEventsAfter(cursor = 0) {
+    return [...this.events.values()]
+      .flatMap((events) => events)
+      .filter((event) => event.id > cursor)
+      .sort((left, right) => left.id - right.id);
+  }
+
   async listTaskDiffs(taskId: string) {
     const events = await this.listTaskEvents(taskId);
     return events?.filter((event) => isTaskDiffEvent(event));
@@ -288,9 +315,67 @@ export class MemoryTaskStore implements TaskStore {
   }
 
   async getRecoverySummary() {
+    const taskBreakdown = {
+      healthy: 0,
+      replaying: 0,
+      recoveryRequired: 0
+    };
+    const runRecoveryBreakdown = {
+      healthy: 0,
+      replaying: 0,
+      recoveryRequired: 0
+    };
+    const runStatusBreakdown = {
+      created: 0,
+      inProgress: 0,
+      awaiting: 0,
+      completed: 0,
+      failed: 0,
+      cancelling: 0,
+      cancelled: 0
+    };
+
+    for (const task of this.tasks.values()) {
+      if (task.recoveryState === "recovery_required") {
+        taskBreakdown.recoveryRequired += 1;
+      } else if (task.recoveryState === "replaying") {
+        taskBreakdown.replaying += 1;
+      } else {
+        taskBreakdown.healthy += 1;
+      }
+
+      for (const run of task.runs) {
+        if (run.status === "created") {
+          runStatusBreakdown.created += 1;
+          runRecoveryBreakdown.recoveryRequired += 1;
+        } else if (run.status === "in-progress") {
+          runStatusBreakdown.inProgress += 1;
+          runRecoveryBreakdown.recoveryRequired += 1;
+        } else if (run.status === "awaiting") {
+          runStatusBreakdown.awaiting += 1;
+          runRecoveryBreakdown.healthy += 1;
+        } else if (run.status === "completed") {
+          runStatusBreakdown.completed += 1;
+          runRecoveryBreakdown.healthy += 1;
+        } else if (run.status === "failed") {
+          runStatusBreakdown.failed += 1;
+          runRecoveryBreakdown.healthy += 1;
+        } else if (run.status === "cancelling") {
+          runStatusBreakdown.cancelling += 1;
+          runRecoveryBreakdown.recoveryRequired += 1;
+        } else if (run.status === "cancelled") {
+          runStatusBreakdown.cancelled += 1;
+          runRecoveryBreakdown.healthy += 1;
+        }
+      }
+    }
+
     return {
-      tasksNeedingRecovery: 0,
-      runsNeedingRecovery: 0
+      tasksNeedingRecovery: taskBreakdown.recoveryRequired,
+      runsNeedingRecovery: runRecoveryBreakdown.recoveryRequired,
+      taskBreakdown,
+      runRecoveryBreakdown,
+      runStatusBreakdown
     };
   }
 

@@ -1,30 +1,46 @@
-/**
- * Agent Registry - Registration and lifecycle management
- *
- * Manages agent registration, deregistration, and lifecycle events.
- * Supports both persistent agents (stored in event store) and temporary
- * agents (in-memory only, auto-deregister after use).
- */
-
 import { randomUUID } from "node:crypto";
-import type { AgentManifest, AgentHealthStatus, AgentRegistryEvent } from "./types";
-import { validateManifest } from "./types";
+import {
+  AgentRegistrationSchema,
+  AgentRegistrationInputSchema,
+  type AgentMetadata,
+  type AgentRegistration,
+  type AgentRegistrationInput,
+  type AgentStatus
+} from "./types";
 
-// ── Types ──────────────────────────────────────────────
+export type AgentRegistryEvent =
+  | {
+      type: "agent.registered";
+      agentId: string;
+      registration: AgentRegistration;
+      timestamp: string;
+    }
+  | {
+      type: "agent.unregistered";
+      agentId: string;
+      timestamp: string;
+    }
+  | {
+      type: "agent.status-changed";
+      agentId: string;
+      status: AgentStatus;
+      version: number;
+      timestamp: string;
+    };
 
-export interface AgentRegistryStore {
+export interface AgentRegistryEventStore {
   append(event: AgentRegistryEvent): Promise<void>;
   loadEvents(): Promise<AgentRegistryEvent[]>;
 }
 
 export interface RegistrationOptions {
-  /** If true, agent is stored in memory only without event persistence */
   temporary?: boolean;
 }
 
-export interface RegistrationResult {
+export interface RegistrationSuccess {
   success: true;
   agentId: string;
+  registrationId: string;
   version: number;
 }
 
@@ -33,29 +49,25 @@ export interface RegistrationError {
   error: string;
 }
 
-export type RegisterResult = RegistrationResult | RegistrationError;
-
-interface InternalAgentRecord extends AgentManifest {
-  version: number;
-  temporary: boolean;
-}
+export type RegisterResult = RegistrationSuccess | RegistrationError;
 
 type ChangeCallback = () => void;
 
-// ── Implementation ──────────────────────────────────────
+function registrationToMetadata(registration: AgentRegistration): AgentMetadata {
+  const { registrationId: _registrationId, version: _version, ...metadata } = registration;
+  return metadata;
+}
 
 export class AgentRegistry {
-  private readonly agents = new Map<string, InternalAgentRecord>();
-  private readonly store: AgentRegistryStore | undefined;
+  private readonly persistentAgents = new Map<string, AgentRegistration>();
+  private readonly temporaryAgents = new Map<string, AgentRegistration>();
+  private readonly store: AgentRegistryEventStore | undefined;
   private readonly changeCallbacks = new Set<ChangeCallback>();
 
-  constructor(options?: { store?: AgentRegistryStore }) {
+  constructor(options?: { store?: AgentRegistryEventStore }) {
     this.store = options?.store;
   }
 
-  /**
-   * Subscribe to registry changes. Returns unsubscribe function.
-   */
   onChange(callback: ChangeCallback): () => void {
     this.changeCallbacks.add(callback);
     return () => this.changeCallbacks.delete(callback);
@@ -67,134 +79,165 @@ export class AgentRegistry {
     }
   }
 
-  async register(manifest: Partial<AgentManifest> & Omit<AgentManifest, "agentId">, options?: RegistrationOptions): Promise<RegisterResult> {
-    // Generate agentId if not provided
-    const agentId = manifest.agentId ?? `agent-${randomUUID().slice(0, 8)}`;
-    const fullManifest: AgentManifest = { ...manifest, agentId };
+  private getRegistration(agentId: string): AgentRegistration | undefined {
+    return this.persistentAgents.get(agentId) ?? this.temporaryAgents.get(agentId);
+  }
 
-    const validation = validateManifest(fullManifest);
-    if (!validation.valid) {
-      return { success: false, error: `Validation failed: ${validation.errors.map((e) => e.message).join(", ")}` };
+  async register(
+    input: AgentRegistrationInput,
+    options?: RegistrationOptions
+  ): Promise<RegisterResult> {
+    const parsed = AgentRegistrationInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: `Validation failed: ${parsed.error.issues
+          .map((issue) => issue.message)
+          .join(", ")}`
+      };
     }
 
-    if (this.agents.has(agentId)) {
-      return { success: false, error: `Agent "${agentId}" is already registered` };
+    const now = new Date();
+    const agentId = parsed.data.agentId ?? `agent-${randomUUID().slice(0, 8)}`;
+    if (this.getRegistration(agentId)) {
+      return {
+        success: false,
+        error: `Agent "${agentId}" is already registered`
+      };
     }
 
-    const isTemporary = options?.temporary ?? false;
-    const record: InternalAgentRecord = {
-      ...fullManifest,
-      version: 1,
-      temporary: isTemporary,
-    };
+    const isTemporary = options?.temporary ?? parsed.data.isTemporary ?? false;
+    const registration = AgentRegistrationSchema.parse({
+      agentId,
+      capabilities: parsed.data.capabilities,
+      status: parsed.data.status ?? "online",
+      lastHeartbeat: parsed.data.lastHeartbeat ?? now,
+      metadata: parsed.data.metadata ?? {},
+      registeredAt: parsed.data.registeredAt ?? now,
+      isTemporary,
+      registrationId: randomUUID(),
+      version: 1
+    });
 
-    this.agents.set(agentId, record);
+    const target = isTemporary ? this.temporaryAgents : this.persistentAgents;
+    target.set(agentId, registration);
 
     if (!isTemporary && this.store) {
       await this.store.append({
         type: "agent.registered",
         agentId,
-        timestamp: new Date().toISOString(),
+        registration,
+        timestamp: now.toISOString()
       });
     }
 
     this.notifyChange();
 
-    return { success: true, agentId, version: 1 };
+    return {
+      success: true,
+      agentId,
+      registrationId: registration.registrationId,
+      version: registration.version
+    };
   }
 
   async unregister(agentId: string): Promise<void> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
+    const persistent = this.persistentAgents.get(agentId);
+    const temporary = this.temporaryAgents.get(agentId);
+    const registration = persistent ?? temporary;
+
+    if (!registration) {
       throw new Error(`Agent "${agentId}" not found`);
     }
 
-    this.agents.delete(agentId);
+    this.persistentAgents.delete(agentId);
+    this.temporaryAgents.delete(agentId);
 
-    if (!agent.temporary && this.store) {
+    if (!registration.isTemporary && this.store) {
       await this.store.append({
-        type: "agent.deregistered",
+        type: "agent.unregistered",
         agentId,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString()
       });
     }
 
     this.notifyChange();
   }
 
-  async updateHealth(agentId: string, health: AgentHealthStatus): Promise<void> {
-    const agent = this.agents.get(agentId);
-    if (!agent) {
+  async updateHeartbeat(agentId: string, timestamp = new Date()): Promise<void> {
+    const registration = this.getRegistration(agentId);
+    if (!registration) {
       throw new Error(`Agent "${agentId}" not found`);
     }
 
-    agent.health = health;
+    registration.lastHeartbeat = timestamp;
+    registration.version += 1;
+    this.notifyChange();
+  }
 
-    if (!agent.temporary && this.store) {
+  async setStatus(agentId: string, status: AgentStatus): Promise<void> {
+    const registration = this.getRegistration(agentId);
+    if (!registration) {
+      throw new Error(`Agent "${agentId}" not found`);
+    }
+
+    registration.status = status;
+    registration.version += 1;
+
+    if (!registration.isTemporary && this.store) {
       await this.store.append({
-        type: "agent.health-changed",
+        type: "agent.status-changed",
         agentId,
-        health,
-        timestamp: new Date().toISOString(),
+        status,
+        version: registration.version,
+        timestamp: new Date().toISOString()
       });
     }
 
     this.notifyChange();
   }
 
-  getAgent(agentId: string): AgentManifest | undefined {
-    const record = this.agents.get(agentId);
-    if (!record) return undefined;
-
-    // Return without internal fields
-    const { version, temporary, ...manifest } = record;
-    return manifest;
+  getAgent(agentId: string): AgentMetadata | undefined {
+    const registration = this.getRegistration(agentId);
+    return registration ? registrationToMetadata(registration) : undefined;
   }
 
-  listAgents(): AgentManifest[] {
-    return Array.from(this.agents.values()).map((record) => {
-      const { version, temporary, ...manifest } = record;
-      return manifest;
-    });
-  }
-
-  getAgentVersion(agentId: string): number | undefined {
-    return this.agents.get(agentId)?.version;
+  listAgents(): AgentMetadata[] {
+    return [...this.persistentAgents.values(), ...this.temporaryAgents.values()].map(
+      registrationToMetadata
+    );
   }
 
   async restore(): Promise<void> {
-    if (!this.store) return;
+    if (!this.store) {
+      return;
+    }
 
-    this.agents.clear();
+    this.persistentAgents.clear();
 
-    const events = await this.store.loadEvents();
-
-    for (const event of events) {
-      if (event.type === "agent.registered") {
-        // We need the full manifest for restore - this is a simplified version
-        // In a real implementation, we'd store the full manifest in the event
-        // For now, create a placeholder that will be updated
-        this.agents.set(event.agentId, {
-          agentId: event.agentId,
-          name: "Restored Agent",
-          version: "0.0.0",
-          description: "Restored from event store",
-          capabilities: [],
-          inputSchema: {},
-          outputSchema: {},
-          runtimeHints: {},
-          health: "healthy",
-          registeredAt: event.timestamp,
-          temporary: false,
-        });
-      } else if (event.type === "agent.deregistered") {
-        this.agents.delete(event.agentId);
-      } else if (event.type === "agent.health-changed") {
-        const agent = this.agents.get(event.agentId);
-        if (agent) {
-          agent.health = event.health;
+    for (const event of await this.store.loadEvents()) {
+      switch (event.type) {
+        case "agent.registered":
+          this.persistentAgents.set(
+            event.agentId,
+            AgentRegistrationSchema.parse(event.registration)
+          );
+          break;
+        case "agent.status-changed": {
+          const registration = this.persistentAgents.get(event.agentId);
+          if (!registration) {
+            break;
+          }
+          registration.status = event.status;
+          registration.version = Math.max(registration.version, event.version);
+          break;
         }
+        case "agent.unregistered":
+          this.persistentAgents.delete(event.agentId);
+          break;
       }
     }
+
+    this.notifyChange();
   }
 }

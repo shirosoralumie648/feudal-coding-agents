@@ -39,6 +39,9 @@ function makeManifest(
     compatibility: overrides.compatibility ?? {
       app: "feudal-coding-agents"
     },
+    security: overrides.security ?? {
+      permissions: []
+    },
     metadata: overrides.metadata ?? {}
   };
 }

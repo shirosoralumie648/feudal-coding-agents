@@ -34,6 +34,9 @@ function makeManifest(
     compatibility: overrides.compatibility ?? {
       app: "feudal-coding-agents"
     },
+    security: overrides.security ?? {
+      permissions: []
+    },
     metadata: overrides.metadata ?? {}
   };
 }
@@ -176,6 +179,79 @@ describe("plugin routes", () => {
     expect(response.json().workflowStepProviders).toHaveLength(0);
   });
 
+  it("GET /api/plugins/marketplace returns installed and discovered local catalog entries", async () => {
+    const store = new MemoryPluginStore();
+    await store.registerDiscovered({
+      manifest: makeManifest({ enabledByDefault: true }),
+      source: { kind: "inline" }
+    });
+    const app = createApp({
+      store,
+      discoveryResult: {
+        discovered: [
+          {
+            manifest: makeManifest({
+              id: "local.available-plugin",
+              name: "Available Plugin",
+              version: "1.2.0"
+            }),
+            source: { kind: "local-directory", rootPath: "/plugins/available" }
+          }
+        ],
+        failed: []
+      }
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/plugins/marketplace"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().entries.map((entry: { pluginId: string }) => entry.pluginId)).toEqual([
+      "local.agent-plugin",
+      "local.available-plugin"
+    ]);
+    expect(response.json().entries[0]).toMatchObject({
+      state: "enabled",
+      compatibility: { status: "compatible" },
+      security: { riskLevel: "low" }
+    });
+    expect(response.json().failed).toEqual([]);
+  });
+
+  it("GET /api/plugins/:pluginId/security returns plugin security review", async () => {
+    const store = new MemoryPluginStore();
+    await store.registerDiscovered({
+      manifest: makeManifest({
+        security: {
+          permissions: [
+            {
+              type: "process",
+              access: "execute",
+              target: "codex",
+              justification: "Run local code review"
+            }
+          ]
+        }
+      }),
+      source: { kind: "inline" }
+    });
+    const app = createApp({ store });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/plugins/local.agent-plugin/security"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      pluginId: "local.agent-plugin",
+      riskLevel: "high",
+      approvalRequired: true
+    });
+  });
+
   it("POST /api/plugins/discover returns manifests and failures without mutating the store", async () => {
     const store = new MemoryPluginStore();
     const app = createApp({
@@ -296,6 +372,47 @@ describe("plugin routes", () => {
     expect(disabled.json().state).toBe("disabled");
   });
 
+  it("POST /api/plugins/:pluginId/enable fails closed for high-risk plugins without admin approval", async () => {
+    const store = new MemoryPluginStore();
+    await store.registerDiscovered({
+      manifest: makeManifest({
+        security: {
+          permissions: [
+            {
+              type: "process",
+              access: "execute",
+              target: "codex",
+              justification: "Run local code review"
+            }
+          ]
+        }
+      }),
+      source: { kind: "inline" }
+    });
+    const app = createApp({ store });
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/plugins/local.agent-plugin/enable"
+    });
+    const nonAdmin = await app.inject({
+      method: "POST",
+      url: "/api/plugins/local.agent-plugin/enable",
+      payload: { approveHighRisk: true, actorRole: "operator" }
+    });
+    const approved = await app.inject({
+      method: "POST",
+      url: "/api/plugins/local.agent-plugin/enable",
+      payload: { approveHighRisk: true, actorRole: "admin" }
+    });
+
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.json().securityReview.riskLevel).toBe("high");
+    expect(nonAdmin.statusCode).toBe(403);
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json().state).toBe("enabled");
+  });
+
   it("POST /api/plugins/:pluginId/enable fails closed for failed plugins", async () => {
     const store = new MemoryPluginStore();
     await store.markPluginFailed("local.agent-plugin", {
@@ -315,4 +432,3 @@ describe("plugin routes", () => {
     expect(response.json().message).toContain("Cannot enable failed plugin");
   });
 });
-

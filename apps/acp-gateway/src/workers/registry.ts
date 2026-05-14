@@ -4,6 +4,8 @@ import {
   decisionBriefSchema,
   executionReportResultSchema,
   executionReportSchema,
+  factCheckResultSchema,
+  factCheckSchema,
   reviewResultSchema,
   reviewSchema,
   taskSpecResultSchema,
@@ -14,6 +16,7 @@ import {
   renderAuditorPrompt,
   renderCriticPrompt,
   renderExecutorPrompt,
+  renderFactCheckerPrompt,
   renderIntakePrompt,
   renderVerifierPrompt
 } from "./prompt-templates";
@@ -35,6 +38,12 @@ export const workerRegistry: Record<GatewayWorkerName, WorkerDefinition> = {
     outputSchema: decisionBriefSchema,
     buildPrompt: (messages) => renderAnalystPrompt(lastMessage(messages)),
     parseOutput: (payload) => decisionBriefResultSchema.parse(payload)
+  },
+  "fact-checker-agent": {
+    artifactName: "fact-check.json",
+    outputSchema: factCheckSchema,
+    buildPrompt: (messages) => renderFactCheckerPrompt(lastMessage(messages)),
+    parseOutput: (payload) => factCheckResultSchema.parse(payload)
   },
   "auditor-agent": {
     artifactName: "review.json",

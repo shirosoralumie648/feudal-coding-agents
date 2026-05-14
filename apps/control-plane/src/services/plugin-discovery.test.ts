@@ -32,6 +32,9 @@ function makeManifest(overrides: Partial<PluginManifest> = {}): PluginManifest {
     compatibility: overrides.compatibility ?? {
       app: "feudal-coding-agents"
     },
+    security: overrides.security ?? {
+      permissions: []
+    },
     metadata: overrides.metadata ?? {}
   };
 }
@@ -219,4 +222,3 @@ describe("PluginDiscovery", () => {
     expect(result.failed[0]?.diagnostic.code).toBe("PLUGIN_ENTRY_NOT_FOUND");
   });
 });
-
